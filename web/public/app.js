@@ -889,7 +889,7 @@ function showDemoBanner() {
   banner.className = 'demo-banner';
   banner.innerHTML = `
     <span>🦞 <strong>Demo Mode</strong> — This is a live preview. To deploy real endpoints, run locally:</span>
-    <code>git clone https://github.com/colygon/nemoclaw && cd nemoclaw/web && npm install && npm start</code>
+    <code>git clone https://github.com/colygon/openclaw-deploy && cd nemoclaw/web && npm install && npm start</code>
     <button onclick="this.parentElement.remove()" class="demo-close">&times;</button>
   `;
   document.body.prepend(banner);
