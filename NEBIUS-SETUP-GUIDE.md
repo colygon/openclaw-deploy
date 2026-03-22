@@ -19,7 +19,7 @@ Lightweight deployment of OpenClaw only. No NemoClaw plugin, no GPU. Inference i
 
 ```bash
 # 1. Install Nebius CLI
-curl -sSL https://storage.ai.nebius.cloud/nebius/install.sh | bash
+curl -sSL https://storage.eu-north1.nebius.cloud/cli/install.sh | bash
 
 # 2. Authenticate
 nebius iam whoami
@@ -88,7 +88,7 @@ This is the right choice when you want NemoClaw's sandbox orchestration and agen
 
 ```bash
 # 1. Install Nebius CLI
-curl -sSL https://storage.ai.nebius.cloud/nebius/install.sh | bash
+curl -sSL https://storage.eu-north1.nebius.cloud/cli/install.sh | bash
 
 # 2. Authenticate
 nebius iam whoami
@@ -156,7 +156,7 @@ Full GPU VM with local inference via vLLM. The model runs directly on the GPU �
 
 ```bash
 # 1. Install Nebius CLI
-curl -sSL https://storage.ai.nebius.cloud/nebius/install.sh | bash
+curl -sSL https://storage.eu-north1.nebius.cloud/cli/install.sh | bash
 
 # 2. Authenticate
 nebius iam whoami
@@ -280,6 +280,38 @@ node server.js
 └─────────────────────────────────────────────┘
 ```
 
+### Cloud Hosting (Nebius VM)
+
+The Deploy UI can be hosted on a Nebius VM for remote access. This requires a small CPU-only instance with Node.js, the Nebius CLI (Linux version), and your SSH keys.
+
+```bash
+# Provision automatically
+./deploy-cloud.sh
+
+# Or manually:
+# 1. Create a cpu-e2/2vcpu-8gb VM with cloud-init
+# 2. Install Node.js 20 + nebius CLI (Linux)
+# 3. Clone repo, npm install, create systemd service
+# 4. Copy ~/.nebius/config.yaml + credentials.yaml (NOT the binary)
+# 5. Copy SSH keys for endpoint access
+# 6. Set up nginx with self-signed HTTPS cert for secure context
+```
+
+**Critical**: Do NOT copy the macOS `~/.nebius/bin/` directory to Linux — it contains a Mach-O ARM64 binary. Only copy config files (`config.yaml`, `credentials.yaml`, `sa-credentials.json`), then reinstall the CLI on the VM with:
+```bash
+curl -sSL https://storage.eu-north1.nebius.cloud/cli/install.sh | bash
+```
+
+### Vercel Deployment (Demo Mode)
+
+The app can be deployed to Vercel for a live demo. When the `VERCEL` env var is detected, the app runs in demo mode with sample data and no CLI dependency.
+
+```bash
+vercel --yes --prod
+```
+
+Demo mode: auto-authenticated, sample regions/models/endpoints, deploy button shows "run locally" message.
+
 ---
 
 ## Nebius Container Registry
@@ -360,54 +392,141 @@ The OpenClaw gateway runs on port 18789 inside the container and serves both Web
 | Port | Service | Exposed to Host? | Protocol |
 |---|---|---|---|
 | 8080 | Health check (HTTP) | Yes (Docker mapped) | HTTP |
-| 18789 | Gateway + Dashboard | **No** (container only) | WS + HTTP |
+| 18789 | Gateway + Dashboard | Configurable (see below) | WS + HTTP |
 
-### Accessing the Dashboard
+### Dashboard Access: Direct Port vs SSH Tunnel
 
-Port 18789 is exposed inside the Docker container but **not mapped to the host**. You need an SSH tunnel to reach it:
-
+**New endpoints** (deployed with `--container-port 18789`) expose the dashboard directly:
 ```bash
-# 1. SSH into the endpoint host
-ssh -i ~/.ssh/id_ed25519_vm nebius@<PUBLIC_IP>
+# Direct access — no tunnel needed
+http://<PUBLIC_IP>:18789/#token=<OPENCLAW_WEB_PASSWORD>
+```
 
-# 2. Find the container's internal IP
+**Older endpoints** (only port 8080 mapped) require an SSH tunnel through the container:
+```bash
+# 1. SSH in and set up socat bridge to container's internal IP
+ssh -i ~/.ssh/id_ed25519_vm nebius@<PUBLIC_IP>
 CONTAINER_IP=$(sudo docker inspect -f \
   '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' \
   $(sudo docker ps -q | head -1))
-
-# 3. Set up a local proxy (socat must be installed)
 sudo apt-get install -y socat
 sudo socat TCP-LISTEN:28789,fork,reuseaddr TCP:$CONTAINER_IP:18789 &
 
-# 4. From your local machine, create the SSH tunnel
+# 2. From your local machine, create the SSH tunnel
 ssh -L 19000:localhost:28789 -i ~/.ssh/id_ed25519_vm nebius@<PUBLIC_IP>
 
-# 5. Open http://localhost:19000 in your browser
+# 3. Open http://localhost:19000 in your browser
 ```
 
-The web UI's **Dashboard** button automates all of this.
+The web UI's **Dashboard** button automates both approaches.
+
+### Dashboard Token Format (Critical)
+
+The OpenClaw Control UI reads the gateway token from the **URL hash fragment**, NOT the query string:
+
+```
+# ✅ Correct — hash fragment
+http://host:18789/#token=mytoken
+
+# ❌ Wrong — query string (ignored by Control UI)
+http://host:18789/?token=mytoken
+```
+
+When connecting to a new gateway URL, **both `token` and `gatewayUrl` must be provided together** in the hash, or the token is stored as "pending" and never applied:
+
+```
+# ✅ Correct — both params together
+http://host:18789/#token=mytoken&gatewayUrl=ws://host:18789
+
+# ❌ Wrong — token alone goes to pendingGatewayToken
+http://host:18789/#token=mytoken
+```
+
+### Device Pairing
+
+The Control UI requires **device pairing** even when token auth is configured. This is a per-browser security feature separate from the gateway token. When accessing the dashboard from a new browser/device:
+
+1. The dashboard shows "pairing required"
+2. The user clicks **Connect** (with token filled in)
+3. The pairing request must be **approved from the gateway host**:
+
+```bash
+# Inside the container — approve the most recent pairing request
+openclaw devices approve --latest --token <gateway-token>
+
+# List all paired and pending devices
+openclaw devices list
+
+# Other device management commands
+openclaw devices reject <requestId>
+openclaw devices remove <deviceId>
+openclaw devices clear
+```
+
+The web UI auto-approves pairing via SSH (retries for up to 18 seconds after the Dashboard button is clicked).
+
+### Secure Context (HTTPS)
+
+The Control UI requires **HTTPS or localhost** for device identity (Web Crypto API). Accessing via plain HTTP over a public IP shows "device identity required".
+
+**Solutions**:
+- **localhost** — always works (SSH tunnel to localhost)
+- **Self-signed cert** — set up nginx with SSL on the hosting VM
+- **Tailscale Serve** — recommended by OpenClaw for remote access
+
+nginx config for HTTPS proxy (on the Deploy UI VM):
+```nginx
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
+server {
+    listen 443 ssl;
+    ssl_certificate     /etc/nginx/ssl/selfsigned.crt;
+    ssl_certificate_key /etc/nginx/ssl/selfsigned.key;
+
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 86400;
+    }
+}
+```
+
+**Gotcha**: Do NOT use static `proxy_set_header Connection "upgrade"` — this breaks non-WebSocket HTTP requests. Use the `map` directive for conditional upgrade.
+
+### Extracting Gateway Tokens
+
+The gateway token may be stored in different places depending on how it was set:
+
+| Source | How to Extract |
+|---|---|
+| Docker env var | `docker exec $CID env \| grep OPENCLAW_GATEWAY_TOKEN` |
+| Config file (raw JSON) | `docker exec $CID cat /home/openclaw/.openclaw/openclaw.json` → parse `gateway.auth.token` |
+| Process command line | `docker exec $CID ps aux \| grep OPENCLAW_GATEWAY_TOKEN` |
+| `openclaw config get` | **Returns `__OPENCLAW_REDACTED__`** — cannot use for extraction |
+
+**Gotcha**: `openclaw config get gateway.auth.token` redacts secret values. Always read the raw `openclaw.json` file instead.
 
 ### Origin Errors
 
-If the dashboard shows `origin not allowed`, you need to configure `allowedOrigins`:
+If the dashboard shows `origin not allowed`, configure `allowedOrigins`:
 
 ```bash
 # Inside the container:
 openclaw config set gateway.controlUi.allowedOrigins \
   '["http://localhost:18789","http://127.0.0.1:18789","*"]'
 
-# Then restart the gateway:
-# Kill the old gateway process
+# Then restart the gateway
 kill $(pgrep -f openclaw-gateway)
-
-# Start a new one (must use token auth with lan binding)
-OPENCLAW_GATEWAY_TOKEN=<your-token> openclaw gateway \
+OPENCLAW_GATEWAY_TOKEN=<token> openclaw gateway \
   --bind lan --auth token --port 18789 &
 ```
-
-**Gotcha**: The gateway refuses `--auth none` when `--bind lan` is set. You must use `--auth token` (with `OPENCLAW_GATEWAY_TOKEN` env var) or `--auth password`.
-
-**Gotcha**: Sending `SIGHUP` to the gateway kills it — it does not gracefully reload. You need to manually restart it after config changes.
 
 ### Gateway Auth Modes
 
@@ -416,6 +535,12 @@ OPENCLAW_GATEWAY_TOKEN=<your-token> openclaw gateway \
 | `loopback` | `none`, `token`, `password` | Only accessible from localhost |
 | `lan` | `token`, `password` | **Requires auth** — `none` is rejected |
 | `tailnet` | `none`, `token`, `password` | Via Tailscale network |
+
+**Gotcha**: `--auth none` with `--bind lan` is rejected with "Refusing to bind gateway to lan without auth".
+
+**Gotcha**: `SIGHUP` kills the gateway (no graceful reload). Restart manually after config changes.
+
+**Gotcha**: `--force` flag requires `fuser` or `lsof` — not available in minimal containers. If the port is free (previous process dead/zombie), start without `--force`.
 
 ---
 
@@ -500,6 +625,9 @@ Without git, `npm install -g openclaw` will fail silently or with cryptic errors
 | Token expired | Re-run `nebius auth login` (opens browser for OAuth). |
 | Wrong project scoped | Check `nebius config get parent-id`. Switch profiles with `nebius --profile <name>`. |
 | Profile not found | Write profile directly to `~/.nebius/config.yaml`. `nebius profile create` requires interactive input. |
+| Install URL changed | Old URL `storage.ai.nebius.cloud` no longer resolves. Use `storage.eu-north1.nebius.cloud/cli/install.sh`. |
+| macOS binary on Linux | Copying `~/.nebius/bin/` from Mac to Linux gives `Exec format error` (Mach-O ARM64). Reinstall CLI on the Linux machine. Only copy config files. |
+| `nebius iam whoami` user name | User name is at `user_profile.attributes.name`, NOT `identity.display_name`. Parse with: `nebius iam whoami --format json`. |
 
 ### Docker & Container Registry
 
@@ -518,17 +646,26 @@ Without git, `npm install -g openclaw` will fail silently or with cryptic errors
 | `cpu-e2` not found | Wrong region. `eu-west1` uses `cpu-d3`, not `cpu-e2`. Check available platforms first. |
 | `AlreadyExists` error | Registry or project name taken. List existing resources first, or use a different name. |
 | Public IP quota exceeded | Nebius tenants are limited to ~3 public IPv4 addresses. Delete unused endpoints first. |
-| `network_ssd` vs `network-ssd` | Use underscores: `network_ssd`. |
+| `network_ssd` vs `network-ssd` | Disk type uses **underscores**: `network_ssd`, `network_hdd`, `network_ssd_io_m3`. |
+| `--source-image-family` wrong flag | Correct flag is `--source-image-family-image-family` (yes, double "image-family"). |
+| Disk too small | Ubuntu 22.04 CUDA image requires minimum 50 GiB disk (`--size-gibibytes 50`). 30 GiB fails. |
+| Multiple `--container-port` | Supported. Use `--container-port 8080 --container-port 18789` to expose both health + dashboard. |
 
-### OpenClaw Gateway
+### OpenClaw Gateway & Dashboard
 
 | Issue | Fix |
 |---|---|
 | `Refusing to bind to lan without auth` | Use `--auth token` with `OPENCLAW_GATEWAY_TOKEN=<token>`. Cannot use `--auth none` with `--bind lan`. |
 | Dashboard shows `origin not allowed` | Add your URL to `gateway.controlUi.allowedOrigins` config. Use `"*"` to allow all. Restart gateway after. |
-| Gateway died after config change | `SIGHUP` kills the gateway (no graceful reload). Restart manually with `openclaw gateway --bind lan --auth token --port 18789`. |
-| Can't reach dashboard on port 18789 | Port 18789 is inside the container but not mapped to host. Need SSH tunnel through the container's internal IP. See "Accessing the Dashboard" section. |
-| Device pairing required | Remote TUI connections may need approval. Run `openclaw devices approve` on the gateway host. |
+| Gateway died after config change | `SIGHUP` kills the gateway (no graceful reload). Restart manually. |
+| `--force` fails: `fuser not found` | Minimal containers lack `fuser`/`lsof`. If the port is free (old process is zombie/dead), start without `--force`. |
+| Can't reach dashboard on port 18789 | Port not mapped to host in older deploys. Use `--container-port 18789` on new deploys, or SSH tunnel + socat for older ones. |
+| `gateway token missing` (URL) | Token must be in URL **hash** (`#token=xxx`), not query string (`?token=xxx`). |
+| `gateway token missing` (hash works but ignored) | Must provide `gatewayUrl` alongside `token` in hash: `#token=xxx&gatewayUrl=wss://host:port`. Without `gatewayUrl`, token becomes "pending". |
+| `config get` returns redacted | `openclaw config get gateway.auth.token` returns `__OPENCLAW_REDACTED__`. Read raw JSON: `cat /home/openclaw/.openclaw/openclaw.json`. |
+| `device identity required` | Dashboard needs HTTPS or localhost for Web Crypto. Use self-signed cert via nginx, Tailscale Serve, or access via SSH tunnel to localhost. |
+| `pairing required` | Device pairing is separate from token auth. Approve via `openclaw devices approve --latest --token <token>` on the gateway host. Per-browser, must be done for each new device. |
+| Token not in Docker env | If token was set inline (`TOKEN=x openclaw gateway ...`), it won't appear in `docker exec env`. Check: raw config JSON, process cmdline (`ps aux`), or `/proc/<pid>/environ`. |
 
 ### VM Specific
 
@@ -538,6 +675,68 @@ Without git, `npm install -g openclaw` will fail silently or with cryptic errors
 | Cloud-init user `root`/`admin` | Reserved names. Use any other username. |
 | SSH user unknown | Nebius VMs use username `nebius`. Not `root`, `ubuntu`, or `admin`. |
 | Model name not found | Use correct HuggingFace name, e.g., `nvidia/Llama-3.1-Nemotron-70B-Instruct-HF` (note the `-HF` suffix). |
+
+---
+
+## Deploy UI: Cloud Hosting Lessons
+
+When hosting the Deploy UI on a Nebius VM (instead of locally), several additional challenges arise:
+
+### Express Sessions Are In-Memory
+
+Sessions are lost on every server restart. API calls from a stale browser session return 401. Fix: use `authFetch()` wrapper that silently re-authenticates on 401 by calling `/api/auth/status` first.
+
+### SSH Tunnel Binding
+
+When the server runs remotely, SSH tunnels bound to `localhost` are only accessible on the VM. Fix: bind tunnels on `0.0.0.0` (`-L 0.0.0.0:port:...`) and return the VM's public hostname in the URL.
+
+### HTTPS via nginx
+
+The OpenClaw Control UI requires a secure context. Set up nginx with a self-signed certificate:
+```bash
+openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+  -keyout /etc/nginx/ssl/selfsigned.key \
+  -out /etc/nginx/ssl/selfsigned.crt \
+  -subj "/CN=openclaw-deploy"
+```
+
+### nginx WebSocket Proxy
+
+**Must** use conditional Connection upgrade — static `Connection "upgrade"` breaks HTTP:
+```nginx
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+# Then: proxy_set_header Connection $connection_upgrade;
+```
+
+Also set `proxy_read_timeout 86400` for long-lived WebSocket connections.
+
+### Express Trust Proxy
+
+Behind nginx, Express sees `req.hostname` as `localhost`. Add `app.set('trust proxy', true)` so Express reads `X-Forwarded-*` headers for the real client hostname.
+
+### Systemd Service
+
+Run the Deploy UI as a systemd service for auto-restart:
+```ini
+[Service]
+Type=simple
+User=nebius
+WorkingDirectory=/home/nebius/openclaw-deploy/web
+ExecStart=/usr/bin/node server.js
+Restart=always
+Environment=PORT=3000
+Environment=HOME=/home/nebius
+Environment=PATH=/home/nebius/.nebius/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
+```
+
+### Updating the VM
+
+```bash
+ssh nebius@<VM_IP> 'cd openclaw-deploy && git pull && cd web && npm install && sudo systemctl restart openclaw-deploy'
+```
 
 ---
 
