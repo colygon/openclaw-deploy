@@ -733,17 +733,21 @@ app.post('/api/tunnel', requireAuth, (req, res) => {
 
   const sshKey = findSshKey();
 
-  // Determine the server's host for the tunnel URL
-  // When running remotely, use the request host; locally, use localhost
-  const serverHost = req.hostname === 'localhost' || req.hostname === '127.0.0.1'
-    ? 'localhost'
-    : req.hostname;
+  // Determine the tunnel URL scheme and host
+  // When running remotely behind HTTPS nginx, use https + nginx dashboard proxy port
+  // When running locally, use http://localhost
+  const isLocal = req.hostname === 'localhost' || req.hostname === '127.0.0.1';
+  const serverHost = isLocal ? 'localhost' : req.hostname;
+  const tunnelScheme = isLocal ? 'http' : 'https';
+  // nginx listens on 19443 and proxies to the tunnel port (19000)
+  const DASHBOARD_HTTPS_PORT = 19443;
 
   // Reuse existing tunnel if alive
   if (activeTunnels[ip]) {
     const existing = activeTunnels[ip];
     if (!existing.proc.killed) {
-      return res.json({ url: `http://${serverHost}:${existing.localPort}`, localPort: existing.localPort, token: existing.gatewayToken || null, reused: true });
+      const reusePort = isLocal ? existing.localPort : DASHBOARD_HTTPS_PORT;
+      return res.json({ url: `${tunnelScheme}://${serverHost}:${reusePort}`, localPort: existing.localPort, token: existing.gatewayToken || null, reused: true });
     }
     // Dead tunnel — clean up
     delete activeTunnels[ip];
@@ -815,7 +819,8 @@ app.post('/api/tunnel', requireAuth, (req, res) => {
     if (proc.killed) {
       res.status(500).json({ error: 'SSH tunnel failed to start' });
     } else {
-      res.json({ url: `http://${serverHost}:${localPort}`, localPort, token: gatewayToken || null, reused: false });
+      const urlPort = isLocal ? localPort : DASHBOARD_HTTPS_PORT;
+      res.json({ url: `${tunnelScheme}://${serverHost}:${urlPort}`, localPort, token: gatewayToken || null, reused: false });
     }
   }, 2000);
 });
