@@ -765,9 +765,19 @@ app.post('/api/tunnel', requireAuth, (req, res) => {
     gatewayToken = endpointPasswords[endpointName];
     console.log(`[Tunnel] Using stored OPENCLAW_WEB_PASSWORD for "${endpointName}" (${gatewayToken.length} chars)`);
   } else {
-    // Fallback: SSH in and extract token — check both OPENCLAW_WEB_PASSWORD and OPENCLAW_GATEWAY_TOKEN
+    // Fallback: SSH in and extract token — check env vars, then process command line
     try {
-      const tokenCmd = `ssh -i ${sshKey} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10 nebius@${ip} "sudo docker exec \\$(sudo docker ps -q | head -1) env 2>/dev/null | grep -E 'OPENCLAW_WEB_PASSWORD|OPENCLAW_GATEWAY_TOKEN' | head -1 | cut -d= -f2-"`;
+      // Try multiple extraction methods:
+      // 1. Docker env vars (OPENCLAW_WEB_PASSWORD or OPENCLAW_GATEWAY_TOKEN)
+      // 2. Process command line (OPENCLAW_GATEWAY_TOKEN=xxx set inline)
+      // 3. Process /proc environ (for tokens set in the shell)
+      const tokenCmd = `ssh -i ${sshKey} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10 nebius@${ip} "` +
+        `CID=\\$(sudo docker ps -q | head -1); ` +
+        `TOKEN=\\$(sudo docker exec \\$CID env 2>/dev/null | grep -E 'OPENCLAW_WEB_PASSWORD|OPENCLAW_GATEWAY_TOKEN' | head -1 | cut -d= -f2-); ` +
+        `if [ -z \\"\\$TOKEN\\" ]; then ` +
+        `  TOKEN=\\$(sudo docker exec \\$CID sh -c 'ps aux 2>/dev/null' | grep -oP 'OPENCLAW_GATEWAY_TOKEN=\\\\K[^ ]+' | head -1); ` +
+        `fi; ` +
+        `echo \\$TOKEN"`;
       console.log(`[Tunnel] No stored password — fetching token via SSH from ${ip}...`);
       gatewayToken = execSync(tokenCmd, { timeout: 15000, encoding: 'utf-8' }).trim();
       if (gatewayToken) {

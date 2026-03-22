@@ -63,6 +63,21 @@ function setupDelegatedListeners() {
   });
 }
 
+// ── Auth-aware fetch (auto re-authenticates on 401) ─────────────────────────
+async function authFetch(url, options = {}) {
+  let res = await fetch(url, options);
+  if (res.status === 401) {
+    // Session expired — silently re-authenticate via CLI
+    const authRes = await fetch('/api/auth/status');
+    const authData = await authRes.json();
+    if (authData.authenticated) {
+      // Retry the original request with fresh session
+      res = await fetch(url, options);
+    }
+  }
+  return res;
+}
+
 // ── Auth ─────────────────────────────────────────────────────────────────────
 async function checkAuth() {
   try {
@@ -167,7 +182,7 @@ function switchPage(page) {
 // ── Load Images ──────────────────────────────────────────────────────────────
 async function loadImages() {
   try {
-    const res = await fetch('/api/images');
+    const res = await authFetch('/api/images');
     const images = await res.json();
     const grid = document.getElementById('image-cards');
     grid.innerHTML = '';
@@ -282,7 +297,7 @@ async function loadTokenFactoryModels() {
   try {
     // Send API key via POST body (not query params) for security
     const apiKey = document.getElementById('tf-api-key')?.value || '';
-    const res = await fetch('/api/models', {
+    const res = await authFetch('/api/models', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ apiKey })
@@ -331,7 +346,7 @@ function selectTokenFactoryModel(modelId, el) {
 // ── Load Regions ─────────────────────────────────────────────────────────────
 async function loadRegions() {
   try {
-    const res = await fetch('/api/regions');
+    const res = await authFetch('/api/regions');
     const regions = await res.json();
     const grid = document.getElementById('region-cards');
     grid.innerHTML = '';
@@ -445,7 +460,7 @@ async function loadMysteryBoxSecrets() {
   btn.disabled = true;
 
   try {
-    const res = await fetch('/api/secrets');
+    const res = await authFetch('/api/secrets');
     const secrets = await res.json();
 
     if (secrets.length === 0) {
@@ -478,7 +493,7 @@ async function selectMysteryBoxSecret(secretId, el) {
   if (badge) badge.textContent = 'loading...';
 
   try {
-    const res = await fetch(`/api/secrets/${encodeURIComponent(secretId)}/payload`);
+    const res = await authFetch(`/api/secrets/${encodeURIComponent(secretId)}/payload`);
     const payload = await res.json();
 
     if (res.ok) {
@@ -560,7 +575,7 @@ async function deploy() {
       apiKey: apiKey
     };
 
-    const res = await fetch('/api/deploy', {
+    const res = await authFetch('/api/deploy', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body)
@@ -602,7 +617,7 @@ async function loadEndpoints() {
   const list = document.getElementById('endpoints-list');
 
   try {
-    const res = await fetch('/api/endpoints');
+    const res = await authFetch('/api/endpoints');
     if (!res.ok) throw new Error('Failed to load');
     const endpoints = await res.json();
 
@@ -665,7 +680,7 @@ async function deleteEndpoint(id, name) {
   if (!confirm(`Delete endpoint "${name}"?`)) return;
 
   try {
-    await fetch(`/api/endpoints/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    await authFetch(`/api/endpoints/${encodeURIComponent(id)}`, { method: 'DELETE' });
     setTimeout(loadEndpoints, 2000);
   } catch (err) {
     alert('Delete failed: ' + err.message);
@@ -861,7 +876,7 @@ async function openDashboard(ip, name, token) {
 
   // Fallback: SSH tunnel for older endpoints without port 18789 exposed
   try {
-    const res = await fetch('/api/tunnel', {
+    const res = await authFetch('/api/tunnel', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ip, endpointName: name })
