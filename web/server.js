@@ -768,21 +768,21 @@ app.post('/api/tunnel', requireAuth, (req, res) => {
     gatewayToken = endpointPasswords[endpointName];
     console.log(`[Tunnel] Using stored OPENCLAW_WEB_PASSWORD for "${endpointName}" (${gatewayToken.length} chars)`);
   } else {
-    // Fallback: SSH in and extract token — check env vars, then process command line
+    // Fallback: SSH in and extract token from multiple sources
     try {
       // Try multiple extraction methods:
       // 1. Docker env vars (OPENCLAW_WEB_PASSWORD or OPENCLAW_GATEWAY_TOKEN)
-      // 2. Process command line (OPENCLAW_GATEWAY_TOKEN=xxx set inline)
-      // 3. Process /proc environ (for tokens set in the shell)
+      // 2. OpenClaw config file (gateway.auth.token)
+      // 3. Process command line (OPENCLAW_GATEWAY_TOKEN=xxx set inline)
       const tokenCmd = `ssh -i ${sshKey} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10 nebius@${ip} "` +
         `CID=\\$(sudo docker ps -q | head -1); ` +
         `TOKEN=\\$(sudo docker exec \\$CID env 2>/dev/null | grep -E 'OPENCLAW_WEB_PASSWORD|OPENCLAW_GATEWAY_TOKEN' | head -1 | cut -d= -f2-); ` +
         `if [ -z \\"\\$TOKEN\\" ]; then ` +
-        `  TOKEN=\\$(sudo docker exec \\$CID sh -c 'ps aux 2>/dev/null' | grep -oP 'OPENCLAW_GATEWAY_TOKEN=\\\\K[^ ]+' | head -1); ` +
+        `  TOKEN=\\$(sudo docker exec \\$CID cat /home/openclaw/.openclaw/openclaw.json 2>/dev/null | python3 -c \\"import sys,json;d=json.load(sys.stdin);print(d.get('gateway',{}).get('auth',{}).get('token',''))\\" 2>/dev/null); ` +
         `fi; ` +
         `echo \\$TOKEN"`;
       console.log(`[Tunnel] No stored password — fetching token via SSH from ${ip}...`);
-      gatewayToken = execSync(tokenCmd, { timeout: 15000, encoding: 'utf-8' }).trim();
+      gatewayToken = execSync(tokenCmd, { timeout: 20000, encoding: 'utf-8' }).trim();
       if (gatewayToken) {
         console.log(`[Tunnel] Got token via SSH (${gatewayToken.length} chars)`);
       } else {
