@@ -733,11 +733,17 @@ app.post('/api/tunnel', requireAuth, (req, res) => {
 
   const sshKey = findSshKey();
 
+  // Determine the server's host for the tunnel URL
+  // When running remotely, use the request host; locally, use localhost
+  const serverHost = req.hostname === 'localhost' || req.hostname === '127.0.0.1'
+    ? 'localhost'
+    : req.hostname;
+
   // Reuse existing tunnel if alive
   if (activeTunnels[ip]) {
     const existing = activeTunnels[ip];
     if (!existing.proc.killed) {
-      return res.json({ url: `http://localhost:${existing.localPort}`, localPort: existing.localPort, token: existing.gatewayToken || null, reused: true });
+      return res.json({ url: `http://${serverHost}:${existing.localPort}`, localPort: existing.localPort, token: existing.gatewayToken || null, reused: true });
     }
     // Dead tunnel — clean up
     delete activeTunnels[ip];
@@ -745,7 +751,7 @@ app.post('/api/tunnel', requireAuth, (req, res) => {
 
   const localPort = nextTunnelPort++;
 
-  console.log(`[Tunnel] Creating SSH tunnel localhost:${localPort} → ${ip} (container:18789)`);
+  console.log(`[Tunnel] Creating SSH tunnel 0.0.0.0:${localPort} → ${ip} (container:18789)`);
 
   // Step 1: Try to get dashboard token
   // First check our stored passwords (set during deploy), then SSH extract as fallback
@@ -777,7 +783,7 @@ app.post('/api/tunnel', requireAuth, (req, res) => {
   const remoteProxyPort = 28789;
   const proc = spawn('ssh', [
     '-tt',
-    '-L', `${localPort}:localhost:${remoteProxyPort}`,
+    '-L', `0.0.0.0:${localPort}:localhost:${remoteProxyPort}`,
     '-i', sshKey,
     '-o', 'StrictHostKeyChecking=no',
     '-o', 'UserKnownHostsFile=/dev/null',
@@ -809,7 +815,7 @@ app.post('/api/tunnel', requireAuth, (req, res) => {
     if (proc.killed) {
       res.status(500).json({ error: 'SSH tunnel failed to start' });
     } else {
-      res.json({ url: `http://localhost:${localPort}`, localPort, token: gatewayToken || null, reused: false });
+      res.json({ url: `http://${serverHost}:${localPort}`, localPort, token: gatewayToken || null, reused: false });
     }
   }, 2000);
 });
