@@ -869,7 +869,10 @@ function reconnectTerminal() {
 async function openDashboard(ip, name, token) {
   // If we have a stored token, open directly — port 18789 is exposed on new deploys
   if (token) {
-    const dashUrl = `http://${ip}:18789/#token=${encodeURIComponent(token)}`;
+    const hashParams = new URLSearchParams();
+    hashParams.set('token', token);
+    hashParams.set('gatewayUrl', `ws://${ip}:18789`);
+    const dashUrl = `http://${ip}:18789/#${hashParams.toString()}`;
     window.open(dashUrl, `dashboard-${ip}`);
     return;
   }
@@ -886,9 +889,14 @@ async function openDashboard(ip, name, token) {
 
     if (res.ok) {
       let dashUrl = data.url;
-      if (data.token) {
-        dashUrl += `#token=${encodeURIComponent(data.token)}`;
-      }
+      // Control UI reads token + gatewayUrl from hash params
+      // Both must be provided together so the token is applied immediately
+      const wsUrl = dashUrl.replace(/^http/, 'ws');
+      const hashParams = new URLSearchParams();
+      if (data.token) hashParams.set('token', data.token);
+      hashParams.set('gatewayUrl', wsUrl);
+      const hash = hashParams.toString();
+      if (hash) dashUrl += '#' + hash;
       window.open(dashUrl, `dashboard-${ip}`);
     } else {
       throw new Error(data.error || 'Failed to create tunnel');
