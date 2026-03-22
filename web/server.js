@@ -838,6 +838,38 @@ app.post('/api/tunnel', requireAuth, (req, res) => {
   }, 2000);
 });
 
+// ── Routes: Auto-approve device pairing ──────────────────────────────────
+app.post('/api/pair-approve', requireAuth, (req, res) => {
+  let ip;
+  try { ip = validateIp(req.body.ip); } catch (e) {
+    return res.status(400).json({ error: 'Valid IP address is required' });
+  }
+  const token = req.body.token || '';
+  const sshKey = findSshKey();
+
+  console.log(`[Pairing] Auto-approving pairing for ${ip}...`);
+
+  // Run approve in background with retries — the pairing request may arrive after a short delay
+  const tokenFlag = token ? `--token ${token}` : '';
+  const approveCmd = `ssh -i ${sshKey} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10 nebius@${ip} ` +
+    `"for i in 1 2 3 4 5 6; do ` +
+    `  RESULT=\\$(sudo docker exec \\$(sudo docker ps -q | head -1) openclaw devices approve --latest ${tokenFlag} 2>&1); ` +
+    `  if echo \\"\\$RESULT\\" | grep -q 'Approved'; then echo \\"\\$RESULT\\"; exit 0; fi; ` +
+    `  sleep 3; ` +
+    `done; echo 'No pending pairing requests found'"`;
+
+  exec(approveCmd, { timeout: 30000, encoding: 'utf-8' }, (err, stdout, stderr) => {
+    if (stdout && stdout.includes('Approved')) {
+      console.log(`[Pairing] ${stdout.trim()}`);
+    } else {
+      console.log(`[Pairing] Result for ${ip}: ${(stdout || stderr || err?.message || 'unknown').trim()}`);
+    }
+  });
+
+  // Return immediately — approval happens in the background
+  res.json({ status: 'approving', message: 'Auto-approving pairing in background (up to 18s)' });
+});
+
 app.delete('/api/tunnel/:ip', requireAuth, (req, res) => {
   let ip;
   try { ip = validateIp(req.params.ip); } catch (e) {

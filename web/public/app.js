@@ -874,6 +874,8 @@ async function openDashboard(ip, name, token) {
     hashParams.set('gatewayUrl', `ws://${ip}:18789`);
     const dashUrl = `http://${ip}:18789/#${hashParams.toString()}`;
     window.open(dashUrl, `dashboard-${ip}`);
+    // Auto-approve device pairing in background
+    autoPairApprove(ip, token);
     return;
   }
 
@@ -898,12 +900,24 @@ async function openDashboard(ip, name, token) {
       const hash = hashParams.toString();
       if (hash) dashUrl += '#' + hash;
       window.open(dashUrl, `dashboard-${ip}`);
+      // Auto-approve device pairing in background
+      autoPairApprove(ip, data.token);
     } else {
       throw new Error(data.error || 'Failed to create tunnel');
     }
   } catch (err) {
     alert(`Dashboard error: ${err.message}`);
   }
+}
+
+// ── Auto-approve device pairing ──────────────────────────────────────────────
+function autoPairApprove(ip, token) {
+  // Fire and forget — the server retries for up to 18s in the background
+  authFetch('/api/pair-approve', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ip, token })
+  }).catch(() => {}); // ignore errors
 }
 
 // ── Demo Banner ──────────────────────────────────────────────────────────────
