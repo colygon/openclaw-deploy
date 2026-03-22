@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OpenClaw Deploy</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
+</head>
+<body>
+  <div id="app">
+    <!-- Login Screen -->
+    <div id="login-screen" class="screen">
+      <div class="login-card">
+        <div class="logo">🦞</div>
+        <h1>OpenClaw</h1>
+        <p class="subtitle">Deploy AI agents to Nebius Cloud</p>
+        <button id="login-btn" class="btn btn-primary btn-lg" onclick="login()">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
+          Login with Nebius
+        </button>
+        <p class="hint" id="login-hint"></p>
+      </div>
+    </div>
+
+    <!-- Main App (sidebar + content) -->
+    <div id="main-app" class="main-app hidden">
+      <!-- Sidebar -->
+      <nav class="sidebar">
+        <div class="sidebar-brand">
+          <span class="logo-sm">🦞</span>
+          <span class="sidebar-title">OpenClaw</span>
+        </div>
+
+        <div class="sidebar-nav">
+          <button class="nav-item active" data-page="deploy" onclick="switchPage('deploy')">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+            Deploy
+          </button>
+          <button class="nav-item" data-page="endpoints" onclick="switchPage('endpoints')">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+            Endpoints
+            <span id="endpoints-count" class="nav-badge hidden">0</span>
+          </button>
+        </div>
+
+        <div class="sidebar-footer">
+          <div class="sidebar-user">
+            <div class="user-avatar" id="user-avatar">?</div>
+            <span id="user-info" class="sidebar-username"></span>
+          </div>
+          <button class="btn btn-ghost btn-sm" onclick="logout()">Logout</button>
+        </div>
+      </nav>
+
+      <!-- Content Area -->
+      <div class="content-area">
+        <!-- Deploy Page -->
+        <div id="page-deploy" class="page">
+          <div class="page-header">
+            <h2>Deploy Agent</h2>
+            <p class="page-desc">Choose an agent, region, and deploy to Nebius Cloud</p>
+          </div>
+
+          <div class="page-body">
+            <!-- Step 1: Choose Image -->
+            <section class="step">
+              <div class="step-header">
+                <span class="step-num">1</span>
+                <h3>Choose Agent</h3>
+              </div>
+              <div class="card-grid" id="image-cards"></div>
+
+              <!-- Custom image input (shown when Custom is selected) -->
+              <div id="custom-image-input" class="custom-input hidden">
+                <label>Docker Image URL</label>
+                <input type="text" id="custom-image-url" placeholder="e.g. docker.io/myuser/myagent:latest" />
+              </div>
+            </section>
+
+            <!-- Step 2: Choose Model -->
+            <section class="step">
+              <div class="step-header">
+                <span class="step-num">2</span>
+                <h3>Choose Model</h3>
+              </div>
+              <div class="card-grid" id="model-cards"></div>
+
+              <!-- Model picker (shown when "Other" is selected) -->
+              <div id="model-picker" class="model-picker hidden">
+                <label>Select a model from Token Factory</label>
+                <div id="model-picker-list" class="model-picker-list">
+                  <div class="mb-loading"><span class="spinner"></span> Loading models...</div>
+                </div>
+              </div>
+            </section>
+
+            <!-- Step 3: Choose Region -->
+            <section class="step">
+              <div class="step-header">
+                <span class="step-num">3</span>
+                <h3>Choose Region</h3>
+              </div>
+              <div class="card-grid" id="region-cards"></div>
+            </section>
+
+            <!-- Step 4: Choose Provider -->
+            <section class="step">
+              <div class="step-header">
+                <span class="step-num">4</span>
+                <h3>Choose Provider</h3>
+              </div>
+              <div class="card-grid" id="provider-cards"></div>
+              <p class="step-hint">All providers route inference through <strong>Nebius</strong> GPUs</p>
+            </section>
+
+            <!-- Step 5: Configure -->
+            <section class="step">
+              <div class="step-header">
+                <span class="step-num">5</span>
+                <h3>Configure</h3>
+              </div>
+              <div class="config-form">
+                <div class="form-group">
+                  <label>Endpoint Name</label>
+                  <input type="text" id="endpoint-name" placeholder="my-agent (auto-generated if empty)" />
+                </div>
+
+                <!-- API Key (Token Factory) -->
+                <div class="form-group" id="api-key-group-tf">
+                  <label>Token Factory API Key</label>
+                  <div class="api-key-row">
+                    <input type="password" id="tf-api-key" placeholder="v1.xxx..." />
+                    <button class="btn btn-sm btn-mysterybox" id="mb-btn" onclick="loadMysteryBoxSecrets()" title="Load from MysteryBox">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                      MysteryBox
+                    </button>
+                  </div>
+                  <div id="mb-secrets" class="mb-secrets hidden"></div>
+                  <span class="form-hint">Paste a key or load from <a href="https://console.nebius.com/mysterybox" target="_blank">MysteryBox</a></span>
+                </div>
+
+                <!-- API Key (OpenRouter) -->
+                <div class="form-group hidden" id="api-key-group-openrouter">
+                  <label>OpenRouter API Key</label>
+                  <input type="password" id="openrouter-api-key" placeholder="sk-or-v1-xxx..." />
+                  <span class="form-hint">Get a key from <a href="https://openrouter.ai/keys" target="_blank">openrouter.ai/keys</a> · Routed to Nebius only</span>
+                </div>
+
+                <!-- API Key (HuggingFace) -->
+                <div class="form-group hidden" id="api-key-group-huggingface">
+                  <label>HuggingFace API Key</label>
+                  <input type="password" id="huggingface-api-key" placeholder="hf_xxx..." />
+                  <span class="form-hint">Get a key from <a href="https://huggingface.co/settings/tokens" target="_blank">huggingface.co/settings/tokens</a> · Provider: Nebius</span>
+                </div>
+              </div>
+            </section>
+
+            <!-- Deploy Button -->
+            <section class="deploy-section">
+              <button id="deploy-btn" class="btn btn-deploy btn-lg" onclick="deploy()" disabled>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+                Deploy
+              </button>
+              <div id="deploy-status" class="deploy-status hidden"></div>
+            </section>
+          </div>
+        </div>
+
+        <!-- Endpoints Page -->
+        <div id="page-endpoints" class="page hidden">
+          <div class="page-header">
+            <h2>Endpoints</h2>
+            <div class="page-header-actions">
+              <button class="btn btn-ghost btn-sm" onclick="loadEndpoints()">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+                Refresh
+              </button>
+              <button class="btn btn-primary btn-sm" onclick="switchPage('deploy')">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                New Deploy
+              </button>
+            </div>
+          </div>
+
+          <div class="page-body">
+            <div id="endpoints-list" class="endpoints-list">
+              <p class="empty-state">No endpoints found</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Bottom Dock (mobile only) -->
+    <nav id="bottom-dock" class="bottom-dock hidden">
+      <button class="dock-item active" data-page="deploy" onclick="switchPage('deploy')">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+        <span>Deploy</span>
+      </button>
+      <button class="dock-item" data-page="endpoints" onclick="switchPage('endpoints')">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+        <span>Endpoints</span>
+        <span id="dock-endpoints-count" class="dock-badge hidden">0</span>
+      </button>
+    </nav>
+
+    <!-- Terminal Panel (slides up from bottom) -->
+    <div id="terminal-panel" class="terminal-panel hidden">
+      <div class="terminal-header">
+        <div class="terminal-header-left">
+          <span class="terminal-icon">></span>
+          <span id="terminal-title">Terminal</span>
+          <span id="terminal-status" class="terminal-status">connecting...</span>
+        </div>
+        <div class="terminal-header-right">
+          <button class="btn btn-ghost btn-sm" onclick="reconnectTerminal()">Reconnect</button>
+          <button class="btn btn-ghost btn-sm" onclick="closeTerminal()">Close</button>
+        </div>
+      </div>
+      <div id="terminal-container"></div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.11.0/lib/addon-web-links.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

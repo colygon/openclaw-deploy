@@ -1,0 +1,16 @@
+{
+  "name": "nemoclaw-deploy",
+  "version": "1.0.0",
+  "description": "Web UI for deploying OpenClaw/NemoClaw to Nebius",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.0",
+    "express-session": "^1.18.0",
+    "node-fetch": "^2.7.0",
+    "ws": "^8.19.0"
+  }
+}

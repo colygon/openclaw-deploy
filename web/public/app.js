@@ -1,0 +1,845 @@
+// ── State ────────────────────────────────────────────────────────────────────
+let state = {
+  selectedImage: null,
+  selectedModel: null,
+  selectedRegion: null,
+  selectedProvider: 'token-factory',
+  authenticated: false
+};
+
+// Terminal state
+let terminal = null;
+let fitAddon = null;
+let terminalWs = null;
+let currentTerminalIp = null;
+let currentTerminalName = null;
+
+// ── Init ─────────────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  checkAuth();
+});
+
+// ── Auth ─────────────────────────────────────────────────────────────────────
+async function checkAuth() {
+  try {
+    const res = await fetch('/api/auth/status');
+    const data = await res.json();
+
+    if (data.authenticated) {
+      state.authenticated = true;
+      show('main-app');
+      show('bottom-dock');
+      hide('login-screen');
+      document.getElementById('user-info').textContent = data.user;
+      // Set avatar initials
+      const initials = (data.user || '?').split(' ').map(w => w[0]).join('').substring(0, 2).toUpperCase();
+      document.getElementById('user-avatar').textContent = initials;
+      loadImages();
+      loadModels();
+      loadRegions();
+      loadProviders();
+      loadEndpoints();
+    } else {
+      show('login-screen');
+      hide('main-app');
+      hide('bottom-dock');
+      if (data.error) {
+        document.getElementById('login-hint').textContent = data.error;
+      }
+    }
+  } catch (err) {
+    show('login-screen');
+    document.getElementById('login-hint').textContent = 'Cannot reach server';
+  }
+}
+
+async function login() {
+  const btn = document.getElementById('login-btn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Checking browser...';
+
+  try {
+    await fetch('/api/auth/login', { method: 'POST' });
+    document.getElementById('login-hint').textContent =
+      'Complete login in your browser, then this page will refresh...';
+
+    // Poll for auth completion
+    const poll = setInterval(async () => {
+      const res = await fetch('/api/auth/status');
+      const data = await res.json();
+      if (data.authenticated) {
+        clearInterval(poll);
+        checkAuth();
+      }
+    }, 2000);
+
+    // Stop polling after 2 minutes
+    setTimeout(() => clearInterval(poll), 120000);
+  } catch (err) {
+    btn.disabled = false;
+    btn.innerHTML = 'Login with Nebius';
+    document.getElementById('login-hint').textContent = 'Login failed: ' + err.message;
+  }
+}
+
+async function logout() {
+  await fetch('/api/auth/logout', { method: 'POST' });
+  state.authenticated = false;
+  show('login-screen');
+  hide('main-app');
+  hide('bottom-dock');
+}
+
+// ── Page Navigation ─────────────────────────────────────────────────────────
+function switchPage(page) {
+  // Update sidebar nav items
+  document.querySelectorAll('.nav-item').forEach(item => {
+    item.classList.toggle('active', item.dataset.page === page);
+  });
+
+  // Update bottom dock items
+  document.querySelectorAll('.dock-item').forEach(item => {
+    item.classList.toggle('active', item.dataset.page === page);
+  });
+
+  // Show/hide pages
+  document.querySelectorAll('.page').forEach(p => p.classList.add('hidden'));
+  const target = document.getElementById(`page-${page}`);
+  if (target) target.classList.remove('hidden');
+
+  // Refresh endpoints when switching to that page
+  if (page === 'endpoints') {
+    loadEndpoints();
+  }
+}
+
+// ── Load Images ──────────────────────────────────────────────────────────────
+async function loadImages() {
+  try {
+    const res = await fetch('/api/images');
+    const images = await res.json();
+    const grid = document.getElementById('image-cards');
+    grid.innerHTML = '';
+
+    for (const [key, img] of Object.entries(images)) {
+      const card = document.createElement('div');
+      card.className = 'select-card';
+      card.dataset.key = key;
+      card.innerHTML = `
+        <div class="card-icon">${img.icon}</div>
+        <div class="card-title">${img.name}</div>
+        <div class="card-desc">${img.description}</div>
+      `;
+      card.onclick = () => selectImage(key);
+      grid.appendChild(card);
+    }
+  } catch (err) {
+    console.error('Failed to load images:', err);
+  }
+}
+
+function selectImage(key) {
+  state.selectedImage = key;
+
+  // Update card selection
+  document.querySelectorAll('#image-cards .select-card').forEach(c => {
+    c.classList.toggle('selected', c.dataset.key === key);
+  });
+
+  // Show/hide custom image input
+  const customInput = document.getElementById('custom-image-input');
+  if (key === 'custom') {
+    customInput.classList.remove('hidden');
+  } else {
+    customInput.classList.add('hidden');
+  }
+
+  updateDeployButton();
+}
+
+// ── Load Models ──────────────────────────────────────────────────────────────
+const FEATURED_MODELS = {
+  'zai-org/GLM-5': {
+    name: 'GLM-5',
+    icon: '🧠',
+    description: 'GLM-5 — latest generation reasoning model from Zhipu AI'
+  },
+  'MiniMaxAI/MiniMax-M2.5': {
+    name: 'MiniMax M2.5',
+    icon: '⚡',
+    description: 'MiniMax-M2.5 — fast, powerful open-source model'
+  }
+};
+
+function loadModels() {
+  const grid = document.getElementById('model-cards');
+  grid.innerHTML = '';
+
+  // Featured model cards
+  for (const [modelId, info] of Object.entries(FEATURED_MODELS)) {
+    const card = document.createElement('div');
+    card.className = 'select-card';
+    card.dataset.key = modelId;
+    card.innerHTML = `
+      <div class="card-icon">${info.icon}</div>
+      <div class="card-title">${info.name}</div>
+      <div class="card-desc">${info.description}</div>
+    `;
+    card.onclick = () => selectModel(modelId);
+    grid.appendChild(card);
+  }
+
+  // "Other" card
+  const otherCard = document.createElement('div');
+  otherCard.className = 'select-card';
+  otherCard.dataset.key = '_other';
+  otherCard.innerHTML = `
+    <div class="card-icon">📋</div>
+    <div class="card-title">Other</div>
+    <div class="card-desc">Browse all Token Factory models</div>
+  `;
+  otherCard.onclick = () => selectModel('_other');
+  grid.appendChild(otherCard);
+}
+
+function selectModel(key) {
+  const picker = document.getElementById('model-picker');
+
+  if (key === '_other') {
+    // Show model picker, load models from Token Factory
+    picker.classList.remove('hidden');
+    loadTokenFactoryModels();
+    // Don't set state yet — user picks from the list
+    state.selectedModel = null;
+  } else {
+    picker.classList.add('hidden');
+    state.selectedModel = key;
+  }
+
+  // Update card selection
+  document.querySelectorAll('#model-cards .select-card').forEach(c => {
+    c.classList.toggle('selected', c.dataset.key === key);
+  });
+
+  updateDeployButton();
+}
+
+async function loadTokenFactoryModels() {
+  const list = document.getElementById('model-picker-list');
+  list.innerHTML = '<div class="mb-loading"><span class="spinner"></span> Loading models from Token Factory...</div>';
+
+  try {
+    // Pass TF API key if the user has entered one
+    const apiKey = document.getElementById('tf-api-key')?.value || '';
+    const url = apiKey ? `/api/models?apiKey=${encodeURIComponent(apiKey)}` : '/api/models';
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('Failed to load models');
+    const models = await res.json();
+
+    if (models.length === 0) {
+      list.innerHTML = '<div class="mb-empty">No models available</div>';
+      return;
+    }
+
+    list.innerHTML = models.map(m => `
+      <div class="model-item ${state.selectedModel === m.id ? 'selected' : ''}" onclick="selectTokenFactoryModel('${m.id}', this)">
+        <div class="model-item-info">
+          <div class="model-item-name">${m.id}</div>
+          ${m.owned_by ? `<div class="model-item-owner">${m.owned_by}</div>` : ''}
+        </div>
+        <span class="model-item-badge">select</span>
+      </div>
+    `).join('');
+  } catch (err) {
+    list.innerHTML = `<div class="mb-empty">Failed to load models: ${err.message}</div>`;
+  }
+}
+
+function selectTokenFactoryModel(modelId, el) {
+  state.selectedModel = modelId;
+
+  // Update selection in the list
+  document.querySelectorAll('.model-item').forEach(item => {
+    item.classList.remove('selected');
+  });
+  if (el) el.classList.add('selected');
+
+  // Update badge
+  const badge = el?.querySelector('.model-item-badge');
+  if (badge) {
+    badge.textContent = '✓ selected';
+    badge.classList.add('active');
+  }
+
+  updateDeployButton();
+}
+
+// ── Load Regions ─────────────────────────────────────────────────────────────
+async function loadRegions() {
+  try {
+    const res = await fetch('/api/regions');
+    const regions = await res.json();
+    const grid = document.getElementById('region-cards');
+    grid.innerHTML = '';
+
+    for (const [key, region] of Object.entries(regions)) {
+      const card = document.createElement('div');
+      card.className = 'select-card';
+      card.dataset.key = key;
+      card.innerHTML = `
+        <div class="card-icon">${region.flag}</div>
+        <div class="card-title">${region.name}</div>
+        <div class="card-desc">${key}</div>
+      `;
+      card.onclick = () => selectRegion(key);
+      grid.appendChild(card);
+    }
+  } catch (err) {
+    console.error('Failed to load regions:', err);
+  }
+}
+
+function selectRegion(key) {
+  state.selectedRegion = key;
+
+  document.querySelectorAll('#region-cards .select-card').forEach(c => {
+    c.classList.toggle('selected', c.dataset.key === key);
+  });
+
+  updateDeployButton();
+}
+
+// ── Provider Selection ──────────────────────────────────────────────────────
+const PROVIDERS = {
+  'token-factory': {
+    name: 'Token Factory',
+    icon: '🏭',
+    description: 'Nebius native inference API'
+  },
+  'openrouter': {
+    name: 'OpenRouter',
+    icon: '🔀',
+    description: 'Multi-provider router — Nebius only'
+  },
+  'huggingface': {
+    name: 'Hugging Face',
+    icon: '🤗',
+    description: 'HF Inference API — Nebius provider'
+  }
+};
+
+function loadProviders() {
+  const grid = document.getElementById('provider-cards');
+  grid.innerHTML = '';
+
+  for (const [key, info] of Object.entries(PROVIDERS)) {
+    const card = document.createElement('div');
+    card.className = 'select-card';
+    card.dataset.key = key;
+    card.innerHTML = `
+      <div class="card-icon">${info.icon}</div>
+      <div class="card-title">${info.name}</div>
+      <div class="card-desc">${info.description}</div>
+    `;
+    card.onclick = () => selectProvider(key);
+    grid.appendChild(card);
+  }
+}
+
+function selectProvider(provider) {
+  state.selectedProvider = provider;
+
+  // Update card selection
+  document.querySelectorAll('#provider-cards .select-card').forEach(c => {
+    c.classList.toggle('selected', c.dataset.key === provider);
+  });
+
+  // Show/hide the correct API key group
+  document.getElementById('api-key-group-tf').classList.toggle('hidden', provider !== 'token-factory');
+  document.getElementById('api-key-group-openrouter').classList.toggle('hidden', provider !== 'openrouter');
+  document.getElementById('api-key-group-huggingface').classList.toggle('hidden', provider !== 'huggingface');
+
+  updateDeployButton();
+}
+
+function getActiveApiKey() {
+  switch (state.selectedProvider) {
+    case 'token-factory':
+      return document.getElementById('tf-api-key').value;
+    case 'openrouter':
+      return document.getElementById('openrouter-api-key').value;
+    case 'huggingface':
+      return document.getElementById('huggingface-api-key').value;
+    default:
+      return '';
+  }
+}
+
+// ── MysteryBox ──────────────────────────────────────────────────────────────
+async function loadMysteryBoxSecrets() {
+  const container = document.getElementById('mb-secrets');
+  const btn = document.getElementById('mb-btn');
+
+  // Toggle off if already visible
+  if (!container.classList.contains('hidden')) {
+    container.classList.add('hidden');
+    return;
+  }
+
+  container.classList.remove('hidden');
+  container.innerHTML = '<div class="mb-loading"><span class="spinner"></span> Loading secrets...</div>';
+  btn.disabled = true;
+
+  try {
+    const res = await fetch('/api/secrets');
+    const secrets = await res.json();
+
+    if (secrets.length === 0) {
+      container.innerHTML = '<div class="mb-empty">No secrets found in MysteryBox</div>';
+      btn.disabled = false;
+      return;
+    }
+
+    container.innerHTML = secrets
+      .filter(s => s.state === 'ACTIVE')
+      .map(s => `
+        <div class="mb-secret-item" onclick="selectMysteryBoxSecret('${s.id}', this)">
+          <div>
+            <div class="mb-secret-name">${s.name}</div>
+            ${s.description ? `<div class="mb-secret-desc">${s.description}</div>` : ''}
+          </div>
+          <span class="mb-secret-badge">select</span>
+        </div>
+      `).join('');
+  } catch (err) {
+    container.innerHTML = `<div class="mb-empty">Failed to load secrets: ${err.message}</div>`;
+  }
+
+  btn.disabled = false;
+}
+
+async function selectMysteryBoxSecret(secretId, el) {
+  el.classList.add('loading');
+  const badge = el.querySelector('.mb-secret-badge');
+  if (badge) badge.textContent = 'loading...';
+
+  try {
+    const res = await fetch(`/api/secrets/${secretId}/payload`);
+    const payload = await res.json();
+
+    if (res.ok) {
+      // Find the first value that looks like a Token Factory key
+      const apiKeyField = document.getElementById('tf-api-key');
+      const value = payload.TOKEN_API_KEY || payload.TOKEN_FACTORY_API_KEY || payload.api_key || Object.values(payload)[0] || '';
+
+      if (value) {
+        apiKeyField.value = value;
+        updateDeployButton();
+
+        // Show success
+        if (badge) {
+          badge.textContent = 'loaded';
+          badge.style.background = 'rgba(34, 197, 94, 0.15)';
+          badge.style.color = 'var(--green)';
+        }
+
+        // Hide the list after a moment
+        setTimeout(() => {
+          document.getElementById('mb-secrets').classList.add('hidden');
+        }, 800);
+      } else {
+        if (badge) badge.textContent = 'empty';
+      }
+    } else {
+      throw new Error(payload.error || 'Failed to retrieve');
+    }
+  } catch (err) {
+    if (badge) {
+      badge.textContent = 'error';
+      badge.style.background = 'rgba(239, 68, 68, 0.15)';
+      badge.style.color = 'var(--red)';
+    }
+    el.classList.remove('loading');
+  }
+}
+
+// ── Deploy ───────────────────────────────────────────────────────────────────
+function updateDeployButton() {
+  const btn = document.getElementById('deploy-btn');
+  btn.disabled = !(state.selectedImage && state.selectedModel && state.selectedRegion);
+}
+
+// Listen for API key input on any provider key field
+document.addEventListener('input', (e) => {
+  if (['tf-api-key', 'openrouter-api-key', 'huggingface-api-key'].includes(e.target.id)) {
+    updateDeployButton();
+  }
+});
+
+async function deploy() {
+  const btn = document.getElementById('deploy-btn');
+  const statusEl = document.getElementById('deploy-status');
+
+  const apiKey = getActiveApiKey();
+  const providerLabels = { 'token-factory': 'Token Factory', 'openrouter': 'OpenRouter', 'huggingface': 'HuggingFace' };
+  if (!apiKey) {
+    statusEl.className = 'deploy-status error';
+    statusEl.textContent = `${providerLabels[state.selectedProvider]} API key is required`;
+    statusEl.classList.remove('hidden');
+    return;
+  }
+
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Deploying...';
+  statusEl.className = 'deploy-status pending';
+  statusEl.textContent = 'Submitting deployment...';
+  statusEl.classList.remove('hidden');
+
+  try {
+    const body = {
+      imageType: state.selectedImage,
+      model: state.selectedModel,
+      region: state.selectedRegion,
+      provider: state.selectedProvider,
+      customImage: document.getElementById('custom-image-url')?.value || '',
+      endpointName: document.getElementById('endpoint-name').value || '',
+      apiKey: apiKey
+    };
+
+    const res = await fetch('/api/deploy', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+
+    const data = await res.json();
+
+    if (res.ok) {
+      statusEl.className = 'deploy-status success';
+      statusEl.innerHTML = `
+        <strong>${data.message}</strong><br>
+        Endpoint: <code>${data.name}</code><br>
+        Image: <code>${data.image}</code><br>
+        <em>Refresh endpoints list in ~60s to see it running.</em>
+      `;
+
+      // Auto-refresh endpoints after delay
+      setTimeout(loadEndpoints, 15000);
+      setTimeout(loadEndpoints, 45000);
+      setTimeout(loadEndpoints, 90000);
+    } else {
+      statusEl.className = 'deploy-status error';
+      statusEl.textContent = data.error || 'Deployment failed';
+    }
+  } catch (err) {
+    statusEl.className = 'deploy-status error';
+    statusEl.textContent = 'Network error: ' + err.message;
+  }
+
+  btn.disabled = false;
+  btn.innerHTML = `
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+    Deploy
+  `;
+}
+
+// ── Endpoints ────────────────────────────────────────────────────────────────
+async function loadEndpoints() {
+  const list = document.getElementById('endpoints-list');
+
+  try {
+    const res = await fetch('/api/endpoints');
+    if (!res.ok) throw new Error('Failed to load');
+    const endpoints = await res.json();
+
+    // Update sidebar badge + dock badge
+    const badge = document.getElementById('endpoints-count');
+    const dockBadge = document.getElementById('dock-endpoints-count');
+    if (endpoints.length > 0) {
+      badge.textContent = endpoints.length;
+      badge.classList.remove('hidden');
+      if (dockBadge) { dockBadge.textContent = endpoints.length; dockBadge.classList.remove('hidden'); }
+    } else {
+      badge.classList.add('hidden');
+      if (dockBadge) dockBadge.classList.add('hidden');
+    }
+
+    if (endpoints.length === 0) {
+      list.innerHTML = '<p class="empty-state">No endpoints deployed yet</p>';
+      return;
+    }
+
+    list.innerHTML = endpoints.map(ep => {
+      const h = ep.health;
+      const healthInfo = h
+        ? `<div class="endpoint-health">
+            <span class="health-service">${h.service || 'unknown'}</span>
+            <span class="health-model" title="${h.model || ''}">${(h.model || '').split('/').pop()}</span>
+            <span class="health-inference">${h.inference || ''}</span>
+          </div>`
+        : (ep.publicIp
+            ? '<span class="endpoint-ip">loading health...</span>'
+            : '<span class="endpoint-ip">pending...</span>');
+
+      return `
+        <div class="endpoint-row">
+          <div class="endpoint-info">
+            <span class="state-badge state-${ep.state}">${ep.state}</span>
+            <span class="endpoint-name">${ep.name}</span>
+            <span class="endpoint-region">${ep.regionFlag} ${ep.regionName}</span>
+            ${healthInfo}
+          </div>
+          <div class="endpoint-actions">
+            ${ep.publicIp && ep.state === 'RUNNING' ? `<button class="btn btn-sm btn-console" onclick="openTerminal('${ep.publicIp}', '${ep.name}')">Terminal</button>` : ''}
+            ${ep.publicIp && ep.state === 'RUNNING' ? `<button class="btn btn-sm btn-dashboard" id="dash-${ep.publicIp.replace(/\./g, '-')}" onclick="openDashboard('${ep.publicIp}', '${ep.name}', ${ep.dashboardToken ? `'${ep.dashboardToken}'` : 'null'})">Dashboard</button>` : ''}
+            <button class="btn btn-sm btn-danger" onclick="deleteEndpoint('${ep.id}', '${ep.name}')">Delete</button>
+          </div>
+        </div>
+      `;
+    }).join('');
+  } catch (err) {
+    list.innerHTML = `<p class="empty-state">Could not load endpoints: ${err.message}</p>`;
+  }
+}
+
+async function deleteEndpoint(id, name) {
+  if (!confirm(`Delete endpoint "${name}"?`)) return;
+
+  try {
+    await fetch(`/api/endpoints/${id}`, { method: 'DELETE' });
+    setTimeout(loadEndpoints, 2000);
+  } catch (err) {
+    alert('Delete failed: ' + err.message);
+  }
+}
+
+// ── Terminal ─────────────────────────────────────────────────────────────────
+function openTerminal(ip, name) {
+  currentTerminalIp = ip;
+  currentTerminalName = name;
+
+  // Update header
+  document.getElementById('terminal-title').textContent = `Terminal — ${name} (${ip})`;
+  setTerminalStatus('connecting');
+
+  // Show panel
+  const panel = document.getElementById('terminal-panel');
+  panel.classList.remove('hidden');
+  document.body.classList.add('terminal-open');
+
+  // Initialize or reset xterm
+  const container = document.getElementById('terminal-container');
+  if (terminal) {
+    terminal.dispose();
+  }
+  container.innerHTML = '';
+
+  terminal = new Terminal({
+    cursorBlink: true,
+    fontSize: 13,
+    fontFamily: "'SF Mono', 'Fira Code', 'Cascadia Code', 'Menlo', monospace",
+    theme: {
+      background: '#0c0c14',
+      foreground: '#e4e4ef',
+      cursor: '#6366f1',
+      selectionBackground: 'rgba(99, 102, 241, 0.3)',
+      black: '#0a0a0f',
+      red: '#ef4444',
+      green: '#22c55e',
+      yellow: '#f59e0b',
+      blue: '#6366f1',
+      magenta: '#8b5cf6',
+      cyan: '#06b6d4',
+      white: '#e4e4ef',
+      brightBlack: '#888899',
+      brightRed: '#f87171',
+      brightGreen: '#4ade80',
+      brightYellow: '#fbbf24',
+      brightBlue: '#818cf8',
+      brightMagenta: '#a78bfa',
+      brightCyan: '#22d3ee',
+      brightWhite: '#ffffff'
+    },
+    allowProposedApi: true
+  });
+
+  fitAddon = new FitAddon.FitAddon();
+  terminal.loadAddon(fitAddon);
+
+  try {
+    const webLinksAddon = new WebLinksAddon.WebLinksAddon();
+    terminal.loadAddon(webLinksAddon);
+  } catch (e) {}
+
+  terminal.open(container);
+
+  // Wait a tick for DOM to render, then fit
+  setTimeout(() => {
+    fitAddon.fit();
+  }, 50);
+
+  // Handle window resize
+  window._terminalResizeHandler = () => {
+    if (fitAddon) fitAddon.fit();
+  };
+  window.addEventListener('resize', window._terminalResizeHandler);
+
+  // Connect WebSocket
+  connectTerminalWs(ip);
+
+  // Forward keyboard input to SSH
+  terminal.onData((data) => {
+    if (terminalWs && terminalWs.readyState === WebSocket.OPEN) {
+      terminalWs.send(JSON.stringify({ type: 'input', data }));
+    }
+  });
+}
+
+function connectTerminalWs(ip) {
+  // Close existing connection
+  if (terminalWs) {
+    terminalWs.close();
+    terminalWs = null;
+  }
+
+  const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const wsUrl = `${proto}//${window.location.host}/ws/terminal?ip=${encodeURIComponent(ip)}`;
+
+  terminalWs = new WebSocket(wsUrl);
+
+  terminalWs.onopen = () => {
+    console.log('[Terminal] WebSocket connected');
+  };
+
+  terminalWs.onmessage = (event) => {
+    try {
+      const msg = JSON.parse(event.data);
+
+      switch (msg.type) {
+        case 'data':
+          terminal.write(msg.data);
+          setTerminalStatus('connected');
+          break;
+        case 'status':
+          terminal.write(msg.data);
+          break;
+        case 'error':
+          terminal.write(`\r\n\x1b[31mError: ${msg.data}\x1b[0m\r\n`);
+          setTerminalStatus('disconnected');
+          break;
+        case 'exit':
+          terminal.write(`\r\n\x1b[33m[Session ended — code ${msg.code}]\x1b[0m\r\n`);
+          setTerminalStatus('disconnected');
+          break;
+      }
+    } catch (e) {
+      // Raw data fallback
+      terminal.write(event.data);
+    }
+  };
+
+  terminalWs.onerror = (err) => {
+    console.error('[Terminal] WebSocket error:', err);
+    terminal.write('\r\n\x1b[31mWebSocket connection error\x1b[0m\r\n');
+    setTerminalStatus('disconnected');
+  };
+
+  terminalWs.onclose = () => {
+    console.log('[Terminal] WebSocket closed');
+    setTerminalStatus('disconnected');
+  };
+}
+
+function setTerminalStatus(status) {
+  const el = document.getElementById('terminal-status');
+  el.textContent = status;
+  el.className = `terminal-status ${status}`;
+}
+
+function closeTerminal() {
+  // Close WebSocket
+  if (terminalWs) {
+    terminalWs.close();
+    terminalWs = null;
+  }
+
+  // Dispose terminal
+  if (terminal) {
+    terminal.dispose();
+    terminal = null;
+  }
+
+  // Remove resize handler
+  if (window._terminalResizeHandler) {
+    window.removeEventListener('resize', window._terminalResizeHandler);
+  }
+
+  // Hide panel
+  document.getElementById('terminal-panel').classList.add('hidden');
+  document.body.classList.remove('terminal-open');
+  currentTerminalIp = null;
+  currentTerminalName = null;
+}
+
+function reconnectTerminal() {
+  if (currentTerminalIp) {
+    setTerminalStatus('connecting');
+    if (terminal) {
+      terminal.write('\r\n\x1b[33m[Reconnecting...]\x1b[0m\r\n');
+    }
+    connectTerminalWs(currentTerminalIp);
+  }
+}
+
+// ── Dashboard ────────────────────────────────────────────────────────────────
+async function openDashboard(ip, name, token) {
+  const btnId = `dash-${ip.replace(/\./g, '-')}`;
+  const btn = document.getElementById(btnId);
+
+  // If we have a stored token, open directly — port 18789 is exposed on new deploys
+  if (token) {
+    const dashUrl = `http://${ip}:18789/?token=${encodeURIComponent(token)}`;
+    window.open(dashUrl, `dashboard-${ip}`);
+    return;
+  }
+
+  // Fallback: SSH tunnel for older endpoints without port 18789 exposed
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'Tunneling...';
+  }
+
+  try {
+    const res = await fetch('/api/tunnel', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ip, endpointName: name })
+    });
+
+    const data = await res.json();
+
+    if (res.ok) {
+      if (btn) {
+        btn.textContent = 'Dashboard';
+        btn.disabled = false;
+      }
+      let dashUrl = data.url;
+      if (data.token) {
+        dashUrl += `?token=${encodeURIComponent(data.token)}`;
+      }
+      window.open(dashUrl, `dashboard-${ip}`);
+    } else {
+      throw new Error(data.error || 'Failed to create tunnel');
+    }
+  } catch (err) {
+    if (btn) {
+      btn.textContent = 'Dashboard';
+      btn.disabled = false;
+    }
+    alert(`Dashboard error: ${err.message}`);
+  }
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+function show(id) { document.getElementById(id).classList.remove('hidden'); }
+function hide(id) { document.getElementById(id).classList.add('hidden'); }
