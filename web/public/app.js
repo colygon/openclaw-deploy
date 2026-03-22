@@ -869,7 +869,7 @@ function reconnectTerminal() {
 async function openDashboard(ip, name, token) {
   // If we have a stored token, open directly — port 18789 is exposed on new deploys
   if (token) {
-    const dashUrl = `http://${ip}:18789/?token=${encodeURIComponent(token)}`;
+    const dashUrl = `http://${ip}:18789/#token=${encodeURIComponent(token)}`;
     window.open(dashUrl, `dashboard-${ip}`);
     return;
   }
@@ -887,7 +887,7 @@ async function openDashboard(ip, name, token) {
     if (res.ok) {
       let dashUrl = data.url;
       if (data.token) {
-        dashUrl += `?token=${encodeURIComponent(data.token)}`;
+        dashUrl += `#token=${encodeURIComponent(data.token)}`;
       }
       window.open(dashUrl, `dashboard-${ip}`);
     } else {

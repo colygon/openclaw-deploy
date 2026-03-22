@@ -14,6 +14,9 @@ const PORT = process.env.PORT || 3000;
 const server = http.createServer(app);
 const IS_VERCEL = !!process.env.VERCEL;
 
+// Trust reverse proxy (nginx) for X-Forwarded-* headers
+app.set('trust proxy', true);
+
 // ── Input validation ──────────────────────────────────────────────────────
 function validateId(value) {
   if (typeof value !== 'string' || !/^[a-zA-Z0-9._-]+$/.test(value)) {
