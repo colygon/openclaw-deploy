@@ -927,6 +927,47 @@ body.terminal-open {
   text-align: center;
 }
 
+/* ── Demo Banner ──────────────────────────────────────────────────── */
+.demo-banner {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.6rem 1.2rem;
+  background: linear-gradient(90deg, rgba(99, 102, 241, 0.15), rgba(139, 92, 246, 0.1));
+  border-bottom: 1px solid rgba(99, 102, 241, 0.3);
+  font-size: 0.8rem;
+  color: var(--text);
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 200;
+}
+
+.demo-banner code {
+  background: rgba(0,0,0,0.3);
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+.demo-close {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 1.2rem;
+  cursor: pointer;
+  margin-left: auto;
+  padding: 0 0.3rem;
+}
+
+.demo-close:hover { color: var(--text); }
+
+.demo-banner ~ #app .main-app { padding-top: 36px; }
+.demo-banner ~ #app .sidebar { top: 36px; height: calc(100vh - 36px); }
+
 /* ── Responsive ───────────────────────────────────────────────────── */
 @media (max-width: 768px) {
   /* Hide sidebar on mobile */

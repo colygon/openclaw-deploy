@@ -14,10 +14,54 @@ let terminalWs = null;
 let currentTerminalIp = null;
 let currentTerminalName = null;
 
+// ── HTML escape helper (XSS prevention) ──────────────────────────────────────
+function esc(str) {
+  if (str == null) return '';
+  const div = document.createElement('div');
+  div.textContent = String(str);
+  return div.innerHTML;
+}
+
 // ── Init ─────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
   checkAuth();
+  setupDelegatedListeners();
 });
+
+// ── Delegated event listeners (avoids inline onclick with user data) ──────────
+function setupDelegatedListeners() {
+  // Endpoint action buttons (Terminal, Dashboard, Delete)
+  document.getElementById('endpoints-list').addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-action]');
+    if (!btn) return;
+
+    const action = btn.dataset.action;
+    const ip = btn.dataset.ip;
+    const name = btn.dataset.name;
+    const id = btn.dataset.id;
+    const token = btn.dataset.token || null;
+
+    switch (action) {
+      case 'terminal': openTerminal(ip, name); break;
+      case 'dashboard': openDashboard(ip, name, token); break;
+      case 'delete': deleteEndpoint(id, name); break;
+    }
+  });
+
+  // Model picker items
+  document.getElementById('model-picker-list').addEventListener('click', (e) => {
+    const item = e.target.closest('[data-model-id]');
+    if (!item) return;
+    selectTokenFactoryModel(item.dataset.modelId, item);
+  });
+
+  // MysteryBox secret items
+  document.getElementById('mb-secrets').addEventListener('click', (e) => {
+    const item = e.target.closest('[data-secret-id]');
+    if (!item) return;
+    selectMysteryBoxSecret(item.dataset.secretId, item);
+  });
+}
 
 // ── Auth ─────────────────────────────────────────────────────────────────────
 async function checkAuth() {
@@ -27,6 +71,7 @@ async function checkAuth() {
 
     if (data.authenticated) {
       state.authenticated = true;
+      state.demo = !!data.demo;
       show('main-app');
       show('bottom-dock');
       hide('login-screen');
@@ -34,6 +79,12 @@ async function checkAuth() {
       // Set avatar initials
       const initials = (data.user || '?').split(' ').map(w => w[0]).join('').substring(0, 2).toUpperCase();
       document.getElementById('user-avatar').textContent = initials;
+
+      // Show demo banner if on Vercel
+      if (state.demo) {
+        showDemoBanner();
+      }
+
       loadImages();
       loadModels();
       loadRegions();
@@ -126,9 +177,9 @@ async function loadImages() {
       card.className = 'select-card';
       card.dataset.key = key;
       card.innerHTML = `
-        <div class="card-icon">${img.icon}</div>
-        <div class="card-title">${img.name}</div>
-        <div class="card-desc">${img.description}</div>
+        <div class="card-icon">${esc(img.icon)}</div>
+        <div class="card-title">${esc(img.name)}</div>
+        <div class="card-desc">${esc(img.description)}</div>
       `;
       card.onclick = () => selectImage(key);
       grid.appendChild(card);
@@ -181,9 +232,9 @@ function loadModels() {
     card.className = 'select-card';
     card.dataset.key = modelId;
     card.innerHTML = `
-      <div class="card-icon">${info.icon}</div>
-      <div class="card-title">${info.name}</div>
-      <div class="card-desc">${info.description}</div>
+      <div class="card-icon">${esc(info.icon)}</div>
+      <div class="card-title">${esc(info.name)}</div>
+      <div class="card-desc">${esc(info.description)}</div>
     `;
     card.onclick = () => selectModel(modelId);
     grid.appendChild(card);
@@ -229,10 +280,13 @@ async function loadTokenFactoryModels() {
   list.innerHTML = '<div class="mb-loading"><span class="spinner"></span> Loading models from Token Factory...</div>';
 
   try {
-    // Pass TF API key if the user has entered one
+    // Send API key via POST body (not query params) for security
     const apiKey = document.getElementById('tf-api-key')?.value || '';
-    const url = apiKey ? `/api/models?apiKey=${encodeURIComponent(apiKey)}` : '/api/models';
-    const res = await fetch(url);
+    const res = await fetch('/api/models', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ apiKey })
+    });
     if (!res.ok) throw new Error('Failed to load models');
     const models = await res.json();
 
@@ -242,16 +296,16 @@ async function loadTokenFactoryModels() {
     }
 
     list.innerHTML = models.map(m => `
-      <div class="model-item ${state.selectedModel === m.id ? 'selected' : ''}" onclick="selectTokenFactoryModel('${m.id}', this)">
+      <div class="model-item ${state.selectedModel === m.id ? 'selected' : ''}" data-model-id="${esc(m.id)}">
         <div class="model-item-info">
-          <div class="model-item-name">${m.id}</div>
-          ${m.owned_by ? `<div class="model-item-owner">${m.owned_by}</div>` : ''}
+          <div class="model-item-name">${esc(m.id)}</div>
+          ${m.owned_by ? `<div class="model-item-owner">${esc(m.owned_by)}</div>` : ''}
         </div>
         <span class="model-item-badge">select</span>
       </div>
     `).join('');
   } catch (err) {
-    list.innerHTML = `<div class="mb-empty">Failed to load models: ${err.message}</div>`;
+    list.innerHTML = `<div class="mb-empty">Failed to load models: ${esc(err.message)}</div>`;
   }
 }
 
@@ -287,9 +341,9 @@ async function loadRegions() {
       card.className = 'select-card';
       card.dataset.key = key;
       card.innerHTML = `
-        <div class="card-icon">${region.flag}</div>
-        <div class="card-title">${region.name}</div>
-        <div class="card-desc">${key}</div>
+        <div class="card-icon">${esc(region.flag)}</div>
+        <div class="card-title">${esc(region.name)}</div>
+        <div class="card-desc">${esc(key)}</div>
       `;
       card.onclick = () => selectRegion(key);
       grid.appendChild(card);
@@ -337,9 +391,9 @@ function loadProviders() {
     card.className = 'select-card';
     card.dataset.key = key;
     card.innerHTML = `
-      <div class="card-icon">${info.icon}</div>
-      <div class="card-title">${info.name}</div>
-      <div class="card-desc">${info.description}</div>
+      <div class="card-icon">${esc(info.icon)}</div>
+      <div class="card-title">${esc(info.name)}</div>
+      <div class="card-desc">${esc(info.description)}</div>
     `;
     card.onclick = () => selectProvider(key);
     grid.appendChild(card);
@@ -403,16 +457,16 @@ async function loadMysteryBoxSecrets() {
     container.innerHTML = secrets
       .filter(s => s.state === 'ACTIVE')
       .map(s => `
-        <div class="mb-secret-item" onclick="selectMysteryBoxSecret('${s.id}', this)">
+        <div class="mb-secret-item" data-secret-id="${esc(s.id)}">
           <div>
-            <div class="mb-secret-name">${s.name}</div>
-            ${s.description ? `<div class="mb-secret-desc">${s.description}</div>` : ''}
+            <div class="mb-secret-name">${esc(s.name)}</div>
+            ${s.description ? `<div class="mb-secret-desc">${esc(s.description)}</div>` : ''}
           </div>
           <span class="mb-secret-badge">select</span>
         </div>
       `).join('');
   } catch (err) {
-    container.innerHTML = `<div class="mb-empty">Failed to load secrets: ${err.message}</div>`;
+    container.innerHTML = `<div class="mb-empty">Failed to load secrets: ${esc(err.message)}</div>`;
   }
 
   btn.disabled = false;
@@ -424,7 +478,7 @@ async function selectMysteryBoxSecret(secretId, el) {
   if (badge) badge.textContent = 'loading...';
 
   try {
-    const res = await fetch(`/api/secrets/${secretId}/payload`);
+    const res = await fetch(`/api/secrets/${encodeURIComponent(secretId)}/payload`);
     const payload = await res.json();
 
     if (res.ok) {
@@ -517,9 +571,9 @@ async function deploy() {
     if (res.ok) {
       statusEl.className = 'deploy-status success';
       statusEl.innerHTML = `
-        <strong>${data.message}</strong><br>
-        Endpoint: <code>${data.name}</code><br>
-        Image: <code>${data.image}</code><br>
+        <strong>${esc(data.message)}</strong><br>
+        Endpoint: <code>${esc(data.name)}</code><br>
+        Image: <code>${esc(data.image)}</code><br>
         <em>Refresh endpoints list in ~60s to see it running.</em>
       `;
 
@@ -573,32 +627,37 @@ async function loadEndpoints() {
       const h = ep.health;
       const healthInfo = h
         ? `<div class="endpoint-health">
-            <span class="health-service">${h.service || 'unknown'}</span>
-            <span class="health-model" title="${h.model || ''}">${(h.model || '').split('/').pop()}</span>
-            <span class="health-inference">${h.inference || ''}</span>
+            <span class="health-service">${esc(h.service || 'unknown')}</span>
+            <span class="health-model" title="${esc(h.model || '')}">${esc((h.model || '').split('/').pop())}</span>
+            <span class="health-inference">${esc(h.inference || '')}</span>
           </div>`
         : (ep.publicIp
             ? '<span class="endpoint-ip">loading health...</span>'
             : '<span class="endpoint-ip">pending...</span>');
 
+      const actions = [];
+      if (ep.publicIp && ep.state === 'RUNNING') {
+        actions.push(`<button class="btn btn-sm btn-console" data-action="terminal" data-ip="${esc(ep.publicIp)}" data-name="${esc(ep.name)}">Terminal</button>`);
+        actions.push(`<button class="btn btn-sm btn-dashboard" data-action="dashboard" data-ip="${esc(ep.publicIp)}" data-name="${esc(ep.name)}" ${ep.dashboardToken ? `data-token="${esc(ep.dashboardToken)}"` : ''}>Dashboard</button>`);
+      }
+      actions.push(`<button class="btn btn-sm btn-danger" data-action="delete" data-id="${esc(ep.id)}" data-name="${esc(ep.name)}">Delete</button>`);
+
       return `
         <div class="endpoint-row">
           <div class="endpoint-info">
-            <span class="state-badge state-${ep.state}">${ep.state}</span>
-            <span class="endpoint-name">${ep.name}</span>
-            <span class="endpoint-region">${ep.regionFlag} ${ep.regionName}</span>
+            <span class="state-badge state-${esc(ep.state)}">${esc(ep.state)}</span>
+            <span class="endpoint-name">${esc(ep.name)}</span>
+            <span class="endpoint-region">${esc(ep.regionFlag)} ${esc(ep.regionName)}</span>
             ${healthInfo}
           </div>
           <div class="endpoint-actions">
-            ${ep.publicIp && ep.state === 'RUNNING' ? `<button class="btn btn-sm btn-console" onclick="openTerminal('${ep.publicIp}', '${ep.name}')">Terminal</button>` : ''}
-            ${ep.publicIp && ep.state === 'RUNNING' ? `<button class="btn btn-sm btn-dashboard" id="dash-${ep.publicIp.replace(/\./g, '-')}" onclick="openDashboard('${ep.publicIp}', '${ep.name}', ${ep.dashboardToken ? `'${ep.dashboardToken}'` : 'null'})">Dashboard</button>` : ''}
-            <button class="btn btn-sm btn-danger" onclick="deleteEndpoint('${ep.id}', '${ep.name}')">Delete</button>
+            ${actions.join('')}
           </div>
         </div>
       `;
     }).join('');
   } catch (err) {
-    list.innerHTML = `<p class="empty-state">Could not load endpoints: ${err.message}</p>`;
+    list.innerHTML = `<p class="empty-state">Could not load endpoints: ${esc(err.message)}</p>`;
   }
 }
 
@@ -606,7 +665,7 @@ async function deleteEndpoint(id, name) {
   if (!confirm(`Delete endpoint "${name}"?`)) return;
 
   try {
-    await fetch(`/api/endpoints/${id}`, { method: 'DELETE' });
+    await fetch(`/api/endpoints/${encodeURIComponent(id)}`, { method: 'DELETE' });
     setTimeout(loadEndpoints, 2000);
   } catch (err) {
     alert('Delete failed: ' + err.message);
@@ -793,9 +852,6 @@ function reconnectTerminal() {
 
 // ── Dashboard ────────────────────────────────────────────────────────────────
 async function openDashboard(ip, name, token) {
-  const btnId = `dash-${ip.replace(/\./g, '-')}`;
-  const btn = document.getElementById(btnId);
-
   // If we have a stored token, open directly — port 18789 is exposed on new deploys
   if (token) {
     const dashUrl = `http://${ip}:18789/?token=${encodeURIComponent(token)}`;
@@ -804,11 +860,6 @@ async function openDashboard(ip, name, token) {
   }
 
   // Fallback: SSH tunnel for older endpoints without port 18789 exposed
-  if (btn) {
-    btn.disabled = true;
-    btn.textContent = 'Tunneling...';
-  }
-
   try {
     const res = await fetch('/api/tunnel', {
       method: 'POST',
@@ -819,10 +870,6 @@ async function openDashboard(ip, name, token) {
     const data = await res.json();
 
     if (res.ok) {
-      if (btn) {
-        btn.textContent = 'Dashboard';
-        btn.disabled = false;
-      }
       let dashUrl = data.url;
       if (data.token) {
         dashUrl += `?token=${encodeURIComponent(data.token)}`;
@@ -832,12 +879,20 @@ async function openDashboard(ip, name, token) {
       throw new Error(data.error || 'Failed to create tunnel');
     }
   } catch (err) {
-    if (btn) {
-      btn.textContent = 'Dashboard';
-      btn.disabled = false;
-    }
     alert(`Dashboard error: ${err.message}`);
   }
+}
+
+// ── Demo Banner ──────────────────────────────────────────────────────────────
+function showDemoBanner() {
+  const banner = document.createElement('div');
+  banner.className = 'demo-banner';
+  banner.innerHTML = `
+    <span>🦞 <strong>Demo Mode</strong> — This is a live preview. To deploy real endpoints, run locally:</span>
+    <code>git clone https://github.com/colygon/nemoclaw && cd nemoclaw/web && npm install && npm start</code>
+    <button onclick="this.parentElement.remove()" class="demo-close">&times;</button>
+  `;
+  document.body.prepend(banner);
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────

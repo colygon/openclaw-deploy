@@ -6,45 +6,165 @@ const fs = require('fs');
 const path = require('path');
 const http = require('http');
 const WebSocket = require('ws');
+const fetch = require('node-fetch');
+const yaml = require('js-yaml');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 const server = http.createServer(app);
+const IS_VERCEL = !!process.env.VERCEL;
+
+// ── Input validation ──────────────────────────────────────────────────────
+function validateId(value) {
+  if (typeof value !== 'string' || !/^[a-zA-Z0-9._-]+$/.test(value)) {
+    throw new Error('Invalid ID format');
+  }
+  return value;
+}
+
+function validateIp(value) {
+  if (typeof value !== 'string' || !/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(value)) {
+    throw new Error('Invalid IP format');
+  }
+  return value;
+}
+
+// ── Session ───────────────────────────────────────────────────────────────
+// Set SESSION_SECRET env var for persistent sessions across restarts
+const SESSION_SECRET = process.env.SESSION_SECRET || crypto.randomBytes(32).toString('hex');
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(session({
-  secret: crypto.randomBytes(32).toString('hex'),
+  secret: SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
-  cookie: { secure: false, maxAge: 24 * 60 * 60 * 1000 }
+  cookie: { secure: false, httpOnly: true, sameSite: 'lax', maxAge: 24 * 60 * 60 * 1000 }
 }));
 
-// ── Region config ──────────────────────────────────────────────────────────
-const REGIONS = {
-  'eu-north1': {
-    name: 'EU North (Finland)',
-    registry: 'cr.eu-north1.nebius.cloud',
-    projectId: 'project-e00r2jeapr00j2q7e7n3yn',
-    cpuPlatform: 'cpu-e2',
-    flag: '🇫🇮'
-  },
-  'eu-west1': {
-    name: 'EU West (Paris)',
-    registry: 'cr.eu-west1.nebius.cloud',
-    projectId: '',
-    cpuPlatform: 'cpu-d3',
-    flag: '🇫🇷'
-  },
-  'us-central1': {
-    name: 'US Central',
-    registry: 'cr.us-central1.nebius.cloud',
-    projectId: 'project-u00pcxzdpr009qf929wrpn',
-    cpuPlatform: 'cpu-e2',
-    flag: '🇺🇸'
-  }
+// ── Auto-detect Nebius config from CLI ────────────────────────────────────
+const REGION_META = {
+  'eu-north1':   { name: 'EU North (Finland)', flag: '🇫🇮', registry: 'cr.eu-north1.nebius.cloud',   cpuPlatform: 'cpu-e2' },
+  'eu-west1':    { name: 'EU West (Paris)',     flag: '🇫🇷', registry: 'cr.eu-west1.nebius.cloud',    cpuPlatform: 'cpu-d3' },
+  'us-central1': { name: 'US Central',          flag: '🇺🇸', registry: 'cr.us-central1.nebius.cloud', cpuPlatform: 'cpu-e2' }
 };
 
+function loadNebiusConfig() {
+  const configPath = process.env.NEBIUS_CONFIG_PATH || path.join(process.env.HOME, '.nebius', 'config.yaml');
+  if (!fs.existsSync(configPath)) {
+    console.warn('⚠ No Nebius CLI config found at', configPath);
+    console.warn('  Run: nebius iam login');
+    return { regions: {}, profiles: {}, tenantId: null };
+  }
+
+  try {
+    const config = yaml.load(fs.readFileSync(configPath, 'utf-8'));
+    const regions = {};
+    const profiles = {};
+    let tenantId = null;
+
+    // Track seen project IDs to avoid duplicate regions
+    const seenProjects = new Set();
+
+    for (const [profileName, profile] of Object.entries(config.profiles || {})) {
+      const parentId = profile['parent-id'] || '';
+
+      // Skip profiles without a valid project ID
+      if (!parentId.startsWith('project-')) continue;
+
+      // Deduplicate — skip if we already have a region for this project
+      if (seenProjects.has(parentId)) continue;
+      seenProjects.add(parentId);
+
+      // Match profile to a known region by name or by trying the nebius CLI
+      let regionKey = Object.keys(REGION_META).find(r =>
+        profileName === r || profileName.includes(r)
+      );
+
+      // If no region match, try to detect region from the project
+      if (!regionKey) {
+        try {
+          const projInfo = JSON.parse(
+            execSync(`nebius --profile ${profileName} iam project get --id ${parentId} --format json`, { encoding: 'utf-8', timeout: 10000 })
+          );
+          const detectedRegion = projInfo.status?.region || projInfo.spec?.region;
+          if (detectedRegion && REGION_META[detectedRegion]) {
+            regionKey = detectedRegion;
+          }
+        } catch (e) {
+          // Fall back to profile name
+        }
+      }
+
+      regionKey = regionKey || profileName;
+
+      const meta = REGION_META[regionKey] || {
+        name: regionKey,
+        flag: '🌐',
+        registry: `cr.${regionKey}.nebius.cloud`,
+        cpuPlatform: 'cpu-e2'
+      };
+
+      regions[regionKey] = {
+        ...meta,
+        projectId: parentId
+      };
+      profiles[regionKey] = profileName;
+
+      if (!tenantId && profile['tenant-id']) {
+        tenantId = profile['tenant-id'];
+      }
+    }
+
+    console.log(`  Loaded ${Object.keys(regions).length} region(s) from ${configPath}`);
+    return { regions, profiles, tenantId };
+  } catch (err) {
+    console.error('Failed to parse Nebius config:', err.message);
+    return { regions: {}, profiles: {}, tenantId: null };
+  }
+}
+
+const nebiusConfig = IS_VERCEL ? { regions: {}, profiles: {}, tenantId: null } : loadNebiusConfig();
+const REGIONS = nebiusConfig.regions;
+const REGION_PROFILES = nebiusConfig.profiles;
+const TENANT_ID = nebiusConfig.tenantId;
+
+// ── Demo mode (Vercel) ──────────────────────────────────────────────────
+const DEMO_REGIONS = {
+  'eu-north1':   { name: 'EU North (Finland)', flag: '🇫🇮', registry: 'cr.eu-north1.nebius.cloud',   cpuPlatform: 'cpu-e2' },
+  'eu-west1':    { name: 'EU West (Paris)',     flag: '🇫🇷', registry: 'cr.eu-west1.nebius.cloud',    cpuPlatform: 'cpu-d3' },
+  'us-central1': { name: 'US Central',          flag: '🇺🇸', registry: 'cr.us-central1.nebius.cloud', cpuPlatform: 'cpu-e2' }
+};
+
+const DEMO_MODELS = [
+  { id: 'deepseek-ai/DeepSeek-R1-0528', owned_by: 'deepseek-ai' },
+  { id: 'zai-org/GLM-5', owned_by: 'zai-org' },
+  { id: 'MiniMaxAI/MiniMax-M2.5', owned_by: 'MiniMaxAI' },
+  { id: 'Qwen/Qwen3-235B-A22B', owned_by: 'Qwen' },
+  { id: 'meta-llama/Llama-4-Maverick-17B-128E-Instruct', owned_by: 'meta-llama' },
+  { id: 'google/gemma-3-27b-it', owned_by: 'google' },
+  { id: 'mistralai/Mistral-Small-3.2-24B-Instruct-2506', owned_by: 'mistralai' }
+];
+
+const DEMO_ENDPOINTS = [
+  {
+    id: 'demo-ep-1', name: 'openclaw-eu-north1-demo', state: 'RUNNING',
+    publicIp: '203.0.113.10', image: 'cr.eu-north1.nebius.cloud/demo/openclaw-serverless:latest',
+    platform: 'cpu-e2', region: 'eu-north1', regionName: 'EU North (Finland)', regionFlag: '🇫🇮',
+    createdAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
+    health: { status: 'healthy', service: 'openclaw-serverless', model: 'zai-org/GLM-5', inference: 'token-factory', gateway_port: 18789 },
+    dashboardToken: null
+  },
+  {
+    id: 'demo-ep-2', name: 'nemoclaw-us-central1-demo', state: 'DEPLOYING',
+    publicIp: null, image: 'cr.us-central1.nebius.cloud/demo/nemoclaw-serverless:latest',
+    platform: 'cpu-e2', region: 'us-central1', regionName: 'US Central', regionFlag: '🇺🇸',
+    createdAt: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
+    health: null, dashboardToken: null
+  }
+];
+
+// ── Image config ──────────────────────────────────────────────────────────
 const IMAGES = {
   'openclaw': {
     name: 'OpenClaw',
@@ -76,8 +196,24 @@ function requireAuth(req, res, next) {
   next();
 }
 
+// ── SSH key finder ─────────────────────────────────────────────────────────
+function findSshKey() {
+  const customPath = process.env.SSH_KEY_PATH;
+  if (customPath && fs.existsSync(customPath)) return customPath;
+
+  const candidates = [
+    path.join(process.env.HOME, '.ssh', 'id_ed25519_vm'),
+    path.join(process.env.HOME, '.ssh', 'id_ed25519'),
+    path.join(process.env.HOME, '.ssh', 'id_rsa')
+  ];
+  return candidates.find(k => fs.existsSync(k)) || candidates[1];
+}
+
 // ── Nebius CLI helper ──────────────────────────────────────────────────────
 function nebius(cmd, profile) {
+  if (profile && !/^[a-zA-Z0-9_-]+$/.test(profile)) {
+    throw new Error('Invalid profile name');
+  }
   const profileFlag = profile ? `--profile ${profile}` : '';
   try {
     const result = execSync(`nebius ${profileFlag} ${cmd}`, {
@@ -96,10 +232,27 @@ function nebiusJson(cmd, profile) {
   return JSON.parse(raw);
 }
 
+// ── Deploy-time secrets (password stored per endpoint name) ────────────────
+const MAX_PASSWORDS = 200;
+const endpointPasswords = {}; // { endpointName: password }
+
+function storePassword(name, password) {
+  const keys = Object.keys(endpointPasswords);
+  if (keys.length >= MAX_PASSWORDS) {
+    delete endpointPasswords[keys[0]]; // evict oldest
+  }
+  endpointPasswords[name] = password;
+}
+
 // ── Routes: Auth ───────────────────────────────────────────────────────────
 
 // Check if user is authenticated via nebius CLI
 app.get('/api/auth/status', (req, res) => {
+  if (IS_VERCEL) {
+    req.session.authenticated = true;
+    return res.json({ authenticated: true, user: 'Demo User', demo: true });
+  }
+
   try {
     const token = nebius('iam get-access-token');
     if (token) {
@@ -145,6 +298,8 @@ app.post('/api/auth/logout', (req, res) => {
 // ── Routes: MysteryBox Secrets ─────────────────────────────────────────────
 
 app.get('/api/secrets', requireAuth, (req, res) => {
+  if (IS_VERCEL) return res.json([{ id: 'demo-secret', name: 'token-factory-key', description: 'Demo API key', state: 'ACTIVE' }]);
+
   try {
     const data = nebiusJson('mysterybox secret list');
     const secrets = (data.items || []).map(s => ({
@@ -160,8 +315,11 @@ app.get('/api/secrets', requireAuth, (req, res) => {
 });
 
 app.get('/api/secrets/:id/payload', requireAuth, (req, res) => {
+  if (IS_VERCEL) return res.json({ TOKEN_FACTORY_API_KEY: 'demo-key-not-real' });
+
   try {
-    const data = nebiusJson(`mysterybox payload get --secret-id ${req.params.id}`);
+    const id = validateId(req.params.id);
+    const data = nebiusJson(`mysterybox payload get --secret-id ${id}`);
     // Return all key-value pairs from the secret
     const payload = {};
     for (const entry of (data.data || [])) {
@@ -176,7 +334,7 @@ app.get('/api/secrets/:id/payload', requireAuth, (req, res) => {
 // ── Routes: Config ─────────────────────────────────────────────────────────
 
 app.get('/api/regions', (req, res) => {
-  res.json(REGIONS);
+  res.json(IS_VERCEL ? DEMO_REGIONS : REGIONS);
 });
 
 app.get('/api/images', (req, res) => {
@@ -190,18 +348,20 @@ let cachedModels = null;
 let modelsCacheTime = 0;
 const MODELS_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
-app.get('/api/models', requireAuth, async (req, res) => {
+// POST to keep API key out of query params / server logs
+app.post('/api/models', requireAuth, async (req, res) => {
+  if (IS_VERCEL) return res.json(DEMO_MODELS);
+
   // Return cached if fresh
   if (cachedModels && Date.now() - modelsCacheTime < MODELS_CACHE_TTL) {
     return res.json(cachedModels);
   }
 
   try {
-    const fetch = require('node-fetch');
     const tfUrl = 'https://api.tokenfactory.nebius.com/v1/models';
 
     // Try user-provided API key first, then try to get one from MysteryBox
-    let authToken = req.query.apiKey;
+    let authToken = req.body.apiKey || '';
     if (!authToken) {
       try {
         const secretsJson = execSync('nebius mysterybox secret list --format json', { encoding: 'utf-8', timeout: 15000 });
@@ -210,7 +370,7 @@ app.get('/api/models', requireAuth, async (req, res) => {
           (s.metadata?.name || '').toLowerCase().includes('token') && (s.metadata?.name || '').toLowerCase().includes('key')
         );
         if (tfSecret) {
-          const payloadJson = execSync(`nebius mysterybox payload get --secret-id ${tfSecret.metadata.id} --format json`, { encoding: 'utf-8', timeout: 15000 });
+          const payloadJson = execSync(`nebius mysterybox payload get --secret-id ${validateId(tfSecret.metadata.id)} --format json`, { encoding: 'utf-8', timeout: 15000 });
           const payload = JSON.parse(payloadJson);
           const entry = (payload.data || [])[0];
           if (entry) authToken = entry.string_value || entry.text_value || '';
@@ -248,14 +408,9 @@ app.get('/api/models', requireAuth, async (req, res) => {
 
 // ── Routes: Endpoints ──────────────────────────────────────────────────────
 
-// Map regions to CLI profiles
-const REGION_PROFILES = {
-  'eu-north1': 'eu-north1',
-  'eu-west1': null,           // no profile yet
-  'us-central1': 'sa-vibehack'
-};
-
 app.get('/api/endpoints', requireAuth, async (req, res) => {
+  if (IS_VERCEL) return res.json(DEMO_ENDPOINTS);
+
   const allEndpoints = [];
 
   for (const [region, profile] of Object.entries(REGION_PROFILES)) {
@@ -293,7 +448,6 @@ app.get('/api/endpoints', requireAuth, async (req, res) => {
   }
 
   // Fetch health status from each running endpoint (in parallel, non-blocking)
-  const fetch = require('node-fetch');
   await Promise.all(allEndpoints.map(async (ep) => {
     if (ep.publicIp && ep.state === 'RUNNING') {
       try {
@@ -311,12 +465,15 @@ app.get('/api/endpoints', requireAuth, async (req, res) => {
   res.json(allEndpoints);
 });
 
-// ── Deploy-time secrets (password stored per endpoint name) ────────────────
-const endpointPasswords = {}; // { endpointName: password }
-
 // ── Routes: Deploy ─────────────────────────────────────────────────────────
 
 app.post('/api/deploy', requireAuth, async (req, res) => {
+  if (IS_VERCEL) {
+    return res.status(400).json({
+      error: 'Demo mode — deploy is only available when running locally. Run: npx nemoclaw or git clone + npm start'
+    });
+  }
+
   const { imageType, model, region, provider, customImage, endpointName, apiKey } = req.body;
 
   if (!imageType || !region) {
@@ -340,13 +497,16 @@ app.post('/api/deploy', requireAuth, async (req, res) => {
     let projectId = regionConfig.projectId;
     if (!projectId) {
       try {
-        const tenantId = 'tenant-e00zj418j5m8a78scb';
+        if (!TENANT_ID) {
+          return res.status(500).json({ error: 'No tenant ID found. Check your Nebius CLI config.' });
+        }
         const projName = `openclaw-${region}`;
         console.log(`Setting up project for ${region}...`);
 
         // List all projects at tenant level and find one in the right region
+        const firstProfile = Object.values(REGION_PROFILES)[0];
         const projects = nebiusJson(
-          `iam project list --parent-id ${tenantId}`, 'eu-north1'
+          `iam project list --parent-id ${TENANT_ID}`, firstProfile
         );
         // Prefer default-project-<region>, then openclaw-<region>, then any match
         const allInRegion = (projects.items || []).filter(
@@ -362,15 +522,15 @@ app.post('/api/deploy', requireAuth, async (req, res) => {
         } else {
           console.log(`Creating project "${projName}"...`);
           const projResult = nebius(
-            `iam project create --name "${projName}" --parent-id ${tenantId} --format json`,
-            'eu-north1'
+            `iam project create --name "${projName}" --parent-id ${TENANT_ID} --format json`,
+            firstProfile
           );
           projectId = JSON.parse(projResult).metadata.id;
         }
         regionConfig.projectId = projectId;
 
         // Write the profile directly into ~/.nebius/config.yaml
-        const configPath = path.join(process.env.HOME, '.nebius', 'config.yaml');
+        const configPath = process.env.NEBIUS_CONFIG_PATH || path.join(process.env.HOME, '.nebius', 'config.yaml');
         let config = fs.readFileSync(configPath, 'utf-8');
 
         if (!config.includes(`    ${region}:`)) {
@@ -381,7 +541,7 @@ app.post('/api/deploy', requireAuth, async (req, res) => {
             `        auth-type: federation`,
             `        federation-endpoint: auth.nebius.com`,
             `        parent-id: ${projectId}`,
-            `        tenant-id: ${tenantId}`
+            `        tenant-id: ${TENANT_ID}`
           ].join('\n');
 
           config = config.replace(
@@ -404,7 +564,7 @@ app.post('/api/deploy', requireAuth, async (req, res) => {
     }
 
     // Determine which CLI profile to use for this region
-    const profile = REGION_PROFILES[region] || 'eu-north1';
+    const profile = REGION_PROFILES[region] || Object.values(REGION_PROFILES)[0];
     const profileFlag = `--profile ${profile}`;
 
     // Auto-detect cheapest CPU platform in this region
@@ -492,7 +652,6 @@ app.post('/api/deploy', requireAuth, async (req, res) => {
         envFlags.push(`--env "HUGGINGFACE_API_KEY=${apiKey}"`);
         envFlags.push('--env "INFERENCE_PROVIDER=huggingface"');
         envFlags.push('--env "HUGGINGFACE_PROVIDER=nebius"');
-        // Also set HF_TOKEN for faster model downloads (same as RunPod template)
         envFlags.push(`--env "HF_TOKEN=${apiKey}"`);
         break;
       case 'token-factory':
@@ -516,7 +675,7 @@ app.post('/api/deploy', requireAuth, async (req, res) => {
     ].join(' ');
 
     // Store the dashboard password keyed by endpoint name
-    endpointPasswords[name] = webPassword;
+    storePassword(name, webPassword);
     console.log(`[Deploy] Stored dashboard password for "${name}" (${webPassword.length} chars)`);
 
     // Run async so we don't block
@@ -546,11 +705,14 @@ app.post('/api/deploy', requireAuth, async (req, res) => {
 // ── Routes: Manage ─────────────────────────────────────────────────────────
 
 app.delete('/api/endpoints/:id', requireAuth, (req, res) => {
+  if (IS_VERCEL) return res.json({ status: 'demo — delete not available', id: req.params.id });
+
   try {
-    exec(`nebius ai endpoint delete --id ${req.params.id}`, { timeout: 60000 }, (err) => {
+    const id = validateId(req.params.id);
+    exec(`nebius ai endpoint delete --id ${id}`, { timeout: 60000 }, (err) => {
       if (err) console.error('Delete error:', err.message);
     });
-    res.json({ status: 'deleting', id: req.params.id });
+    res.json({ status: 'deleting', id });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -561,15 +723,15 @@ const activeTunnels = {}; // { ip: { proc, localPort } }
 let nextTunnelPort = 19000;
 
 app.post('/api/tunnel', requireAuth, (req, res) => {
-  const { ip, endpointName } = req.body;
-  if (!ip) return res.status(400).json({ error: 'IP is required' });
+  let ip;
+  try {
+    ip = validateIp(req.body.ip);
+  } catch (e) {
+    return res.status(400).json({ error: 'Valid IP address is required' });
+  }
+  const { endpointName } = req.body;
 
-  const sshKeys = [
-    path.join(process.env.HOME, '.ssh', 'id_ed25519_vm'),
-    path.join(process.env.HOME, '.ssh', 'id_ed25519'),
-    path.join(process.env.HOME, '.ssh', 'id_rsa')
-  ];
-  const sshKey = sshKeys.find(k => fs.existsSync(k)) || sshKeys[0];
+  const sshKey = findSshKey();
 
   // Reuse existing tunnel if alive
   if (activeTunnels[ip]) {
@@ -653,7 +815,10 @@ app.post('/api/tunnel', requireAuth, (req, res) => {
 });
 
 app.delete('/api/tunnel/:ip', requireAuth, (req, res) => {
-  const { ip } = req.params;
+  let ip;
+  try { ip = validateIp(req.params.ip); } catch (e) {
+    return res.status(400).json({ error: 'Invalid IP' });
+  }
   const tunnel = activeTunnels[ip];
   if (tunnel) {
     tunnel.proc.kill('SIGTERM');
@@ -676,10 +841,13 @@ const wss = new WebSocket.Server({ server, path: '/ws/terminal' });
 
 wss.on('connection', (ws, req) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
-  const ip = url.searchParams.get('ip');
+  const rawIp = url.searchParams.get('ip');
 
-  if (!ip) {
-    ws.send(JSON.stringify({ type: 'error', data: 'No IP provided' }));
+  let ip;
+  try {
+    ip = validateIp(rawIp);
+  } catch (e) {
+    ws.send(JSON.stringify({ type: 'error', data: 'Invalid IP address' }));
     ws.close();
     return;
   }
@@ -687,13 +855,7 @@ wss.on('connection', (ws, req) => {
   console.log(`[Terminal] Connecting to ${ip}...`);
   ws.send(JSON.stringify({ type: 'status', data: `Connecting to ${ip}...\r\n` }));
 
-  // Find SSH key — try common locations
-  const sshKeys = [
-    path.join(process.env.HOME, '.ssh', 'id_ed25519_vm'),
-    path.join(process.env.HOME, '.ssh', 'id_ed25519'),
-    path.join(process.env.HOME, '.ssh', 'id_rsa')
-  ];
-  const sshKey = sshKeys.find(k => fs.existsSync(k)) || sshKeys[0];
+  const sshKey = findSshKey();
 
   // SSH into the endpoint, then exec into the container to run openclaw
   const sshProc = spawn('ssh', [
@@ -744,9 +906,6 @@ wss.on('connection', (ws, req) => {
       const parsed = JSON.parse(msg);
       if (parsed.type === 'input' && sshProc.stdin.writable) {
         sshProc.stdin.write(parsed.data);
-      } else if (parsed.type === 'resize' && parsed.cols && parsed.rows) {
-        // Send SIGWINCH-style resize — use stty via the SSH channel
-        // This is handled by the terminal itself via xterm.js fit addon
       }
     } catch (e) {
       // Raw string fallback
@@ -762,12 +921,50 @@ wss.on('connection', (ws, req) => {
   });
 });
 
+// ── Health check ───────────────────────────────────────────────────────────
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok', service: 'openclaw-deploy', uptime: process.uptime() });
+});
+
 // ── SPA fallback ───────────────────────────────────────────────────────────
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-server.listen(PORT, () => {
-  console.log(`\n  🦞 OpenClaw Deploy UI`);
-  console.log(`  http://localhost:${PORT}\n`);
-});
+// ── Start server ───────────────────────────────────────────────────────────
+if (!IS_VERCEL) {
+  server.listen(PORT, () => {
+    console.log(`\n  🦞 OpenClaw Deploy UI`);
+    console.log(`  http://localhost:${PORT}\n`);
+  });
+}
+
+// Export for Vercel serverless
+module.exports = app;
+
+// ── Graceful shutdown ──────────────────────────────────────────────────────
+function shutdown(signal) {
+  console.log(`\n  Received ${signal}, shutting down...`);
+
+  // Close all SSH tunnels
+  for (const [ip, tunnel] of Object.entries(activeTunnels)) {
+    tunnel.proc.kill('SIGTERM');
+    console.log(`  Closed tunnel to ${ip}`);
+  }
+
+  // Close WebSocket connections
+  wss.clients.forEach(ws => ws.close());
+
+  server.close(() => {
+    console.log('  Server closed.');
+    process.exit(0);
+  });
+
+  // Force exit after 5 seconds
+  setTimeout(() => process.exit(1), 5000);
+}
+
+if (!IS_VERCEL) {
+  process.on('SIGINT', () => shutdown('SIGINT'));
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+}
