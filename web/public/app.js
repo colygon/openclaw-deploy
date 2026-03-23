@@ -280,6 +280,7 @@ async function loadImages() {
     const grid = document.getElementById('image-cards');
     grid.innerHTML = '';
 
+    const keys = Object.keys(images);
     for (const [key, img] of Object.entries(images)) {
       const card = document.createElement('div');
       card.className = 'select-card';
@@ -291,6 +292,11 @@ async function loadImages() {
       `;
       card.onclick = () => selectImage(key);
       grid.appendChild(card);
+    }
+
+    // Default: select first image (OpenClaw)
+    if (keys.length > 0 && !state.selectedImage) {
+      selectImage(keys[0]);
     }
   } catch (err) {
     console.error('Failed to load images:', err);
@@ -359,6 +365,12 @@ function loadModels() {
   `;
   otherCard.onclick = () => selectModel('_other');
   grid.appendChild(otherCard);
+
+  // Default: select GLM-5
+  const defaultModel = Object.keys(FEATURED_MODELS)[0]; // 'zai-org/GLM-5'
+  if (defaultModel && !state.selectedModel) {
+    selectModel(defaultModel);
+  }
 }
 
 function selectModel(key) {
@@ -451,6 +463,7 @@ async function loadRegions() {
     const grid = document.getElementById('region-cards');
     grid.innerHTML = '';
 
+    const keys = Object.keys(regions);
     for (const [key, region] of Object.entries(regions)) {
       const card = document.createElement('div');
       card.className = 'select-card';
@@ -462,6 +475,11 @@ async function loadRegions() {
       `;
       card.onclick = () => selectRegion(key);
       grid.appendChild(card);
+    }
+
+    // Default: select first region (eu-north1)
+    if (keys.length > 0 && !state.selectedRegion) {
+      selectRegion(keys[0]);
     }
   } catch (err) {
     console.error('Failed to load regions:', err);
@@ -513,6 +531,9 @@ function loadProviders() {
     card.onclick = () => selectProvider(key);
     grid.appendChild(card);
   }
+
+  // Default: select Token Factory
+  selectProvider('token-factory');
 }
 
 function selectProvider(provider) {
@@ -819,12 +840,11 @@ function renderEndpoints() {
     const presetLabel = ep.preset ? formatPreset(ep.preset) : '';
     const model = h?.model ? (h.model.split('/').pop()) : (ep.model ? ep.model.split('/').pop() : '');
 
+    const startStopBtn = (ep.state === 'RUNNING' || ep.state === 'STARTING')
+      ? `<button class="btn-action-icon btn-stop" data-action="stop" data-id="${esc(ep.id)}" data-name="${esc(ep.name)}" title="Stop"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg></button>`
+      : `<button class="btn-action-icon btn-start" data-action="start" data-id="${esc(ep.id)}" data-name="${esc(ep.name)}" title="Start"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="8,5 20,12 8,19"/></svg></button>`;
+
     const actions = [];
-    if (ep.state === 'RUNNING' || ep.state === 'STARTING') {
-      actions.push(`<button class="btn-action-icon btn-stop" data-action="stop" data-id="${esc(ep.id)}" data-name="${esc(ep.name)}" title="Stop"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg></button>`);
-    } else {
-      actions.push(`<button class="btn-action-icon btn-start" data-action="start" data-id="${esc(ep.id)}" data-name="${esc(ep.name)}" title="Start"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="8,5 20,12 8,19"/></svg></button>`);
-    }
     if (ep.publicIp && ep.state === 'RUNNING') {
       actions.push(`<button class="btn-action-pill btn-terminal" data-action="terminal" data-ip="${esc(ep.publicIp)}" data-name="${esc(ep.name)}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg> Terminal</button>`);
       actions.push(`<button class="btn-action-pill btn-dashboard" data-action="dashboard" data-ip="${esc(ep.publicIp)}" data-name="${esc(ep.name)}" ${ep.dashboardToken ? `data-token="${esc(ep.dashboardToken)}"` : ''}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg> Dashboard</button>`);
@@ -833,6 +853,7 @@ function renderEndpoints() {
 
     return `<div class="endpoint-row" data-state="${esc(ep.state)}" onclick="toggleEndpointExpand(this, event)">
       <div class="endpoint-col col-name">
+        ${startStopBtn}
         <div class="endpoint-icon">${ep.image?.includes('nemoclaw') ? '\uD83D\uDD31' : '\uD83E\uDD9E'}</div>
         <div class="endpoint-name-group">
           <span class="endpoint-name">${esc(ep.name)}</span>

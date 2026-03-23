@@ -1,6 +1,6 @@
 # 🦞 OpenClaw Deploy
 
-Deploy [OpenClaw](https://github.com/nichochar/openclaw) AI agents to [Nebius Cloud](https://nebius.com) — via a web UI, CLI scripts, or GPU VMs.
+Deploy [OpenClaw](https://github.com/nichochar/openclaw) AI agents to [Nebius Cloud](https://nebius.com) — via a web UI or CLI scripts.
 
 This repo provides everything you need to run OpenClaw on Nebius infrastructure: a browser-based deployment tool, shell scripts for automated setup, container images, and a comprehensive setup guide covering multi-region deployments, Token Factory / OpenRouter / HuggingFace integration, SSH access, and troubleshooting.
 
