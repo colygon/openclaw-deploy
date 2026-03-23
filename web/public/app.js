@@ -821,13 +821,13 @@ function renderEndpoints() {
 
     const actions = [];
     if (ep.state === 'RUNNING' || ep.state === 'STARTING') {
-      actions.push(`<button class="btn-action-pill btn-stop" data-action="stop" data-id="${esc(ep.id)}" data-name="${esc(ep.name)}">Stop</button>`);
+      actions.push(`<button class="btn-action-icon btn-stop" data-action="stop" data-id="${esc(ep.id)}" data-name="${esc(ep.name)}" title="Stop"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg></button>`);
     } else {
-      actions.push(`<button class="btn-action-pill btn-start" data-action="start" data-id="${esc(ep.id)}" data-name="${esc(ep.name)}">Start</button>`);
+      actions.push(`<button class="btn-action-icon btn-start" data-action="start" data-id="${esc(ep.id)}" data-name="${esc(ep.name)}" title="Start"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="8,5 20,12 8,19"/></svg></button>`);
     }
     if (ep.publicIp && ep.state === 'RUNNING') {
-      actions.push(`<button class="btn-action-pill" data-action="terminal" data-ip="${esc(ep.publicIp)}" data-name="${esc(ep.name)}">Terminal</button>`);
-      actions.push(`<button class="btn-action-pill" data-action="dashboard" data-ip="${esc(ep.publicIp)}" data-name="${esc(ep.name)}" ${ep.dashboardToken ? `data-token="${esc(ep.dashboardToken)}"` : ''}>Dashboard</button>`);
+      actions.push(`<button class="btn-action-pill btn-terminal" data-action="terminal" data-ip="${esc(ep.publicIp)}" data-name="${esc(ep.name)}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg> Terminal</button>`);
+      actions.push(`<button class="btn-action-pill btn-dashboard" data-action="dashboard" data-ip="${esc(ep.publicIp)}" data-name="${esc(ep.name)}" ${ep.dashboardToken ? `data-token="${esc(ep.dashboardToken)}"` : ''}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg> Dashboard</button>`);
     }
     const actionButtons = actions.join('');
 
