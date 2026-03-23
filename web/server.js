@@ -987,14 +987,22 @@ wss.on('connection', (ws, req) => {
 
   const sshKey = findSshKey();
 
+  if (!sshKey) {
+    ws.send(JSON.stringify({ type: 'error', data: 'No SSH key found. Check ~/.ssh/ for id_ed25519 or id_ed25519_vm.' }));
+    ws.close();
+    return;
+  }
+
   // SSH into the endpoint, then exec into the container to run openclaw
   const sshProc = spawn('ssh', [
     '-tt',
+    '-v',
     '-i', sshKey,
     '-o', 'StrictHostKeyChecking=no',
     '-o', 'UserKnownHostsFile=/dev/null',
     '-o', 'ServerAliveInterval=15',
-    '-o', 'ConnectTimeout=10',
+    '-o', 'ConnectTimeout=30',
+    '-o', 'ConnectionAttempts=2',
     `nebius@${ip}`,
     // After SSH connects, find the running container and exec openclaw tui
     'sudo docker exec -it $(sudo docker ps -q | head -1) openclaw tui 2>/dev/null || echo "No container running — dropping to shell"; bash'
@@ -1017,8 +1025,13 @@ wss.on('connection', (ws, req) => {
   sshProc.on('close', (code) => {
     console.log(`[Terminal] SSH to ${ip} closed (code ${code})`);
     if (ws.readyState === WebSocket.OPEN) {
+      const msg = code === 255
+        ? 'SSH connection failed. The endpoint may not have SSH enabled, or the connection timed out.'
+        : null;
+      if (msg) ws.send(JSON.stringify({ type: 'error', data: msg }));
       ws.send(JSON.stringify({ type: 'exit', code }));
-      ws.close();
+      // Small delay before closing so the client receives the messages
+      setTimeout(() => { if (ws.readyState === WebSocket.OPEN) ws.close(); }, 500);
     }
   });
 
