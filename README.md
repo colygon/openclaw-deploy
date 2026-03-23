@@ -13,6 +13,16 @@ This repo provides everything you need to run OpenClaw on Nebius infrastructure:
 | **GPU VM** | `./install-nemoclaw-vm.sh` | Self-hosted inference with local vLLM |
 | **Step-by-step** | Follow the [Nebius Setup Guide](NEBIUS-SETUP-GUIDE.md) | Learning, custom configurations |
 
+## Screenshots
+
+| Create Agent | Endpoints |
+|:---:|:---:|
+| ![Create Agent](docs/screenshot-create.png) | ![Endpoints](docs/screenshot-endpoints.png) |
+
+| Configure & Deploy |
+|:---:|
+| ![Configure](docs/screenshot-configure.png) |
+
 ## Web UI Features
 
 - **One-click deploy** — Choose agent, model, region, provider and deploy
