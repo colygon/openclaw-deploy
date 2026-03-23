@@ -205,8 +205,8 @@ function findSshKey() {
   if (customPath && fs.existsSync(customPath)) return customPath;
 
   const candidates = [
-    path.join(process.env.HOME, '.ssh', 'id_ed25519_vm'),
     path.join(process.env.HOME, '.ssh', 'id_ed25519'),
+    path.join(process.env.HOME, '.ssh', 'id_ed25519_vm'),
     path.join(process.env.HOME, '.ssh', 'id_rsa')
   ];
   return candidates.find(k => fs.existsSync(k)) || candidates[1];
@@ -237,7 +237,19 @@ function nebiusJson(cmd, profile) {
 
 // ── Deploy-time secrets (password stored per endpoint name) ────────────────
 const MAX_PASSWORDS = 200;
+const PASSWORDS_FILE = path.join(__dirname, 'endpoint-passwords.json');
 const endpointPasswords = {}; // { endpointName: password }
+
+// Load saved passwords from disk on startup
+try {
+  if (fs.existsSync(PASSWORDS_FILE)) {
+    const saved = JSON.parse(fs.readFileSync(PASSWORDS_FILE, 'utf-8'));
+    Object.assign(endpointPasswords, saved);
+    console.log(`[Passwords] Loaded ${Object.keys(saved).length} saved passwords`);
+  }
+} catch (e) {
+  console.error('[Passwords] Failed to load:', e.message);
+}
 
 function storePassword(name, password) {
   const keys = Object.keys(endpointPasswords);
@@ -245,6 +257,8 @@ function storePassword(name, password) {
     delete endpointPasswords[keys[0]]; // evict oldest
   }
   endpointPasswords[name] = password;
+  // Persist to disk
+  try { fs.writeFileSync(PASSWORDS_FILE, JSON.stringify(endpointPasswords, null, 2)); } catch (e) { /* ignore */ }
 }
 
 // ── Routes: Auth ───────────────────────────────────────────────────────────
