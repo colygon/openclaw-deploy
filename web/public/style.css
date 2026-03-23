@@ -548,6 +548,12 @@ body {
   font-size: 0.72rem;
 }
 
+.proxy-link {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 0.78rem;
+  color: var(--accent);
+}
+
 .endpoint-row:first-child {
   border-top: 1px solid var(--border);
   border-radius: var(--radius-sm) var(--radius-sm) 0 0;

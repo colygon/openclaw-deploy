@@ -1164,6 +1164,102 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', service: 'openclaw-deploy', uptime: process.uptime() });
 });
 
+// ── Proxy: single-IP routing to endpoints ─────────────────────────────────
+// /proxy/<endpoint-name>/... → http://<endpoint-ip>:8080/...
+// /proxy/<endpoint-name>/dashboard/... → http://<endpoint-ip>:18789/...
+let proxyEndpointCache = {}; // { name: { ip, dashboardToken } }
+
+// Refresh proxy cache from endpoint list
+async function refreshProxyCache() {
+  try {
+    const allEndpoints = [];
+    for (const [region, info] of Object.entries(REGIONS)) {
+      const profile = info.profile;
+      if (!profile) continue;
+      try {
+        const data = nebiusJson('ai endpoint list', profile);
+        for (const ep of (data.items || [])) {
+          const ip = ep.status.instances?.[0]?.public_ip;
+          if (ip) {
+            proxyEndpointCache[ep.metadata.name] = {
+              ip,
+              dashboardToken: endpointPasswords[ep.metadata.name] || null
+            };
+          }
+        }
+      } catch (e) { /* skip region */ }
+    }
+    console.log(`[Proxy] Cache refreshed: ${Object.keys(proxyEndpointCache).length} endpoints`);
+  } catch (e) {
+    console.error('[Proxy] Cache refresh error:', e.message);
+  }
+}
+
+// Refresh cache periodically (every 2 min)
+if (!IS_VERCEL) {
+  refreshProxyCache();
+  setInterval(refreshProxyCache, 120000);
+}
+
+app.use('/proxy/:endpointName', (req, res) => {
+  const name = req.params.endpointName;
+  const endpoint = proxyEndpointCache[name];
+
+  if (!endpoint) {
+    return res.status(404).json({ error: `Endpoint "${name}" not found or has no public IP` });
+  }
+
+  // Determine target port: /proxy/name/dashboard/* → :18789, else → :8080
+  const subPath = req.url;
+  let targetPort = 8080;
+  let targetPath = subPath;
+
+  if (subPath.startsWith('/dashboard')) {
+    targetPort = 18789;
+    targetPath = subPath.replace(/^\/dashboard/, '') || '/';
+  }
+
+  const targetUrl = `http://${endpoint.ip}:${targetPort}${targetPath}`;
+
+  // Proxy the request
+  const proxyReq = http.request(targetUrl, {
+    method: req.method,
+    headers: {
+      ...req.headers,
+      host: `${endpoint.ip}:${targetPort}`,
+      'x-forwarded-for': req.ip,
+      'x-forwarded-proto': req.protocol,
+    }
+  }, (proxyRes) => {
+    res.writeHead(proxyRes.statusCode, proxyRes.headers);
+    proxyRes.pipe(res, { end: true });
+  });
+
+  proxyReq.on('error', (err) => {
+    console.error(`[Proxy] Error proxying to ${targetUrl}:`, err.message);
+    if (!res.headersSent) {
+      res.status(502).json({ error: `Proxy error: ${err.message}` });
+    }
+  });
+
+  // Pipe request body for POST/PUT
+  req.pipe(proxyReq, { end: true });
+});
+
+// API to list proxy URLs
+app.get('/api/proxy-urls', requireAuth, (req, res) => {
+  const baseUrl = `${req.protocol}://${req.get('host')}`;
+  const urls = {};
+  for (const [name, ep] of Object.entries(proxyEndpointCache)) {
+    urls[name] = {
+      api: `${baseUrl}/proxy/${name}/`,
+      dashboard: `${baseUrl}/proxy/${name}/dashboard/`,
+      health: `${baseUrl}/proxy/${name}/`,
+    };
+  }
+  res.json(urls);
+});
+
 // ── SPA fallback ───────────────────────────────────────────────────────────
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
