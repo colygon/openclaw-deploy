@@ -1023,15 +1023,17 @@ wss.on('connection', (ws, req) => {
   }
 
   console.log(`[Terminal] Connecting to ${ip}...`);
-  ws.send(JSON.stringify({ type: 'status', data: `Connecting to ${ip}...\r\n` }));
 
   const sshKey = findSshKey();
+  console.log(`[Terminal] SSH key: ${sshKey}`);
 
   if (!sshKey) {
     ws.send(JSON.stringify({ type: 'error', data: 'No SSH key found. Check ~/.ssh/ for id_ed25519 or id_ed25519_vm.' }));
     ws.close();
     return;
   }
+
+  ws.send(JSON.stringify({ type: 'status', data: `Connecting to ${ip}...\r\n` }));
 
   // SSH into the endpoint, then exec into the container to run openclaw
   const sshProc = spawn('ssh', [
@@ -1062,8 +1064,8 @@ wss.on('connection', (ws, req) => {
     }
   });
 
-  sshProc.on('close', (code) => {
-    console.log(`[Terminal] SSH to ${ip} closed (code ${code})`);
+  sshProc.on('close', (code, signal) => {
+    console.log(`[Terminal] SSH to ${ip} closed (code ${code}, signal ${signal}, ws.readyState=${ws.readyState})`);
     if (ws.readyState === WebSocket.OPEN) {
       const msg = code === 255
         ? 'SSH connection failed. The endpoint may not have SSH enabled, or the connection timed out.'
