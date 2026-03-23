@@ -1007,7 +1007,7 @@ app.get('/api/tunnels', requireAuth, (req, res) => {
 });
 
 // ── WebSocket SSH Terminal ─────────────────────────────────────────────────
-const wss = new WebSocket.Server({ server, path: '/ws/terminal' });
+const wss = new WebSocket.Server({ server, path: '/ws/terminal', perMessageDeflate: false });
 
 wss.on('connection', (ws, req) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
@@ -1111,7 +1111,7 @@ wss.on('connection', (ws, req) => {
 });
 
 // ── WebSocket Logs Stream ─────────────────────────────────────────────────
-const wssLogs = new WebSocket.Server({ server, path: '/ws/logs' });
+const wssLogs = new WebSocket.Server({ server, path: '/ws/logs', perMessageDeflate: false });
 
 wssLogs.on('connection', (ws, req) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
