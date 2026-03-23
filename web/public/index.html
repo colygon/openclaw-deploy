@@ -38,11 +38,11 @@
         </div>
 
         <div class="sidebar-nav">
-          <button class="nav-item active" data-page="deploy" onclick="switchPage('deploy')">
+          <button class="nav-item" data-page="deploy" onclick="switchPage('deploy')">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
             Create
           </button>
-          <button class="nav-item" data-page="endpoints" onclick="switchPage('endpoints')">
+          <button class="nav-item active" data-page="endpoints" onclick="switchPage('endpoints')">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
             Endpoints
             <span id="endpoints-count" class="nav-badge hidden">0</span>
@@ -61,7 +61,7 @@
       <!-- Content Area -->
       <div class="content-area">
         <!-- Deploy Page -->
-        <div id="page-deploy" class="page">
+        <div id="page-deploy" class="page hidden">
           <div class="page-header">
             <h2>Create Agent</h2>
             <p class="page-desc">Choose an agent, region, and deploy to Nebius Cloud</p>
@@ -187,7 +187,7 @@
         </div>
 
         <!-- Endpoints Page -->
-        <div id="page-endpoints" class="page hidden">
+        <div id="page-endpoints" class="page">
           <div class="page-header-top">
             <h2>Endpoints</h2>
             <div class="page-header-actions">
@@ -238,12 +238,12 @@
 
     <!-- Bottom Dock (mobile only) -->
     <nav id="bottom-dock" class="bottom-dock hidden">
-      <button class="dock-item active" data-page="deploy" onclick="switchPage('deploy')">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+      <button class="dock-item" data-page="deploy" onclick="switchPage('deploy')">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
         <span>Create</span>
       </button>
-      <button class="dock-item" data-page="endpoints" onclick="switchPage('endpoints')">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+      <button class="dock-item active" data-page="endpoints" onclick="switchPage('endpoints')">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
         <span>Endpoints</span>
         <span id="dock-endpoints-count" class="dock-badge hidden">0</span>
       </button>

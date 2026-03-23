@@ -398,9 +398,9 @@ body {
   align-items: center;
 }
 
-.search-bar input {
+.search-bar input[type="text"] {
   width: 100%;
-  padding: 0.5rem 0.8rem 0.5rem 2.2rem;
+  padding: 0.5rem 0.8rem 0.5rem 2.5rem;
   background: var(--bg-input);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -602,6 +602,14 @@ body {
   font-size: 0.9rem;
   color: var(--text-bright);
   word-break: break-word;
+}
+
+.endpoint-model {
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .endpoint-id {
@@ -1483,12 +1491,12 @@ body.terminal-open {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 0.2rem;
-  padding: 0.5rem 0;
+  gap: 0.25rem;
+  padding: 0.6rem 0 0.4rem;
   border: none;
   background: transparent;
   color: var(--text-dim);
-  font-size: 0.65rem;
+  font-size: 0.7rem;
   font-weight: 600;
   cursor: pointer;
   transition: color 0.15s ease;
@@ -1592,8 +1600,8 @@ a {
     z-index: 100;
     background: #141418;
     border-top: 1px solid var(--border);
-    padding: 0.3rem 0;
-    padding-bottom: calc(0.3rem + env(safe-area-inset-bottom, 0px));
+    padding: 0.4rem 0;
+    padding-bottom: calc(0.4rem + env(safe-area-inset-bottom, 0px));
   }
 
   /* Remove sidebar margin */
@@ -1613,14 +1621,32 @@ a {
   .endpoints-list { padding: 0 1rem; }
 
   .endpoint-row {
-    grid-template-columns: 1fr;
-    gap: 0.6rem;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
   }
 
-  .col-actions {
-    justify-content: flex-start;
+  .endpoint-row .col-name {
+    flex: 1;
+    min-width: 0;
   }
 
-  .endpoint-info { gap: 0.5rem; }
-  .endpoint-actions { width: 100%; }
+  .endpoint-row .col-status {
+    flex-shrink: 0;
+  }
+
+  .endpoint-row .col-created {
+    flex-shrink: 0;
+    font-size: 0.75rem;
+  }
+
+  .endpoint-row .col-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+
+  .endpoint-row .endpoint-details {
+    width: 100%;
+  }
 }

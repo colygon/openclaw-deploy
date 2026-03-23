@@ -813,7 +813,7 @@ function renderEndpoints() {
   list.innerHTML = filtered.map(ep => {
     const h = ep.health;
     const presetLabel = ep.preset ? formatPreset(ep.preset) : '';
-    const model = h?.model ? (h.model.split('/').pop()) : '';
+    const model = h?.model ? (h.model.split('/').pop()) : (ep.model ? ep.model.split('/').pop() : '');
 
     const actions = [];
     actions.push(`<button class="btn-action-pill" data-action="logs" data-id="${esc(ep.id)}" data-name="${esc(ep.name)}">Logs</button>`);
@@ -828,6 +828,7 @@ function renderEndpoints() {
         <div class="endpoint-icon">${ep.image?.includes('nemoclaw') ? '\uD83D\uDD31' : '\uD83E\uDD9E'}</div>
         <div class="endpoint-name-group">
           <span class="endpoint-name">${esc(ep.name)}</span>
+          ${model ? `<span class="endpoint-model">${esc(model)}</span>` : ''}
         </div>
       </div>
       <div class="endpoint-col col-status">

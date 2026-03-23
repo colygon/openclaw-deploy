@@ -497,6 +497,10 @@ app.get('/api/endpoints', requireAuth, async (req, res) => {
         if (imageMatch) detectedRegion = imageMatch[1];
         const ri = REGIONS[detectedRegion] || regionInfo;
 
+        // Extract model from env vars
+        const envVars = ep.spec.environment_variables || [];
+        const modelEnv = envVars.find(v => v.name === 'INFERENCE_MODEL');
+
         allEndpoints.push({
           id: ep.metadata.id,
           name: ep.metadata.name,
@@ -505,6 +509,7 @@ app.get('/api/endpoints', requireAuth, async (req, res) => {
           image: ep.spec.image,
           platform: ep.spec.platform,
           preset: ep.spec.preset || null,
+          model: modelEnv?.value || null,
           region: detectedRegion,
           regionName: ri.name || detectedRegion || 'Unknown',
           regionFlag: ri.flag || '🌐',
