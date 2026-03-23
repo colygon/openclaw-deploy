@@ -1038,7 +1038,6 @@ wss.on('connection', (ws, req) => {
   // SSH into the endpoint, then exec into the container to run openclaw
   const sshProc = spawn('ssh', [
     '-tt',
-    '-v',
     '-i', sshKey,
     '-o', 'StrictHostKeyChecking=no',
     '-o', 'UserKnownHostsFile=/dev/null',
