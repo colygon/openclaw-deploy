@@ -1299,7 +1299,7 @@ server.on('upgrade', (request, socket, head) => {
       wssLogs.emit('connection', ws, request);
     });
   } else if (pathname.startsWith('/proxy/')) {
-    // Proxy WebSocket to endpoint's dashboard (port 18789)
+    // Proxy WebSocket to endpoint's gateway (port 18789)
     const parts = pathname.split('/');
     const endpointName = decodeURIComponent(parts[2]);
     const endpoint = proxyEndpointCache[endpointName];
@@ -1309,49 +1309,47 @@ server.on('upgrade', (request, socket, head) => {
       return;
     }
 
-    const targetUrl = `ws://${endpoint.ip}:18789`;
-    const targetWs = new WebSocket(targetUrl, { headers: { origin: request.headers.origin || '' } });
+    // Use a dedicated WebSocket.Server to handle the client upgrade,
+    // then bridge to the target gateway via a second WebSocket
+    const proxyWss = new WebSocket.Server({ noServer: true, perMessageDeflate: false });
+    proxyWss.handleUpgrade(request, socket, head, (clientWs) => {
+      const targetUrl = `ws://${endpoint.ip}:18789`;
+      console.log(`[Proxy WS] Bridging to ${targetUrl}`);
 
-    targetWs.on('open', () => {
-      // Complete the upgrade manually by proxying between client and target
-      const clientWs = new WebSocket(null);
-      // Use raw TCP proxy instead
+      const targetWs = new WebSocket(targetUrl, {
+        perMessageDeflate: false,
+        headers: {
+          origin: request.headers.origin || `https://${request.headers.host}`,
+          'x-forwarded-for': request.headers['x-forwarded-for'] || request.socket.remoteAddress,
+        }
+      });
+
+      targetWs.on('open', () => {
+        console.log(`[Proxy WS] Connected to ${targetUrl}`);
+      });
+
+      // Bridge: client → target
+      clientWs.on('message', (data, isBinary) => {
+        if (targetWs.readyState === WebSocket.OPEN) {
+          targetWs.send(data, { binary: isBinary });
+        }
+      });
+
+      // Bridge: target → client
+      targetWs.on('message', (data, isBinary) => {
+        if (clientWs.readyState === WebSocket.OPEN) {
+          clientWs.send(data, { binary: isBinary });
+        }
+      });
+
+      clientWs.on('close', () => targetWs.close());
+      targetWs.on('close', () => clientWs.close());
+      clientWs.on('error', () => targetWs.close());
+      targetWs.on('error', (err) => {
+        console.error(`[Proxy WS] Target error: ${err.message}`);
+        clientWs.close();
+      });
     });
-
-    // Simpler: use http module to proxy the upgrade
-    const proxyReq = http.request({
-      hostname: endpoint.ip,
-      port: 18789,
-      path: pathname.replace(`/proxy/${parts[2]}/dashboard`, '') || '/',
-      method: 'GET',
-      headers: {
-        ...request.headers,
-        host: `${endpoint.ip}:18789`,
-      }
-    });
-
-    proxyReq.on('upgrade', (proxyRes, proxySocket, proxyHead) => {
-      // Send the upgrade response back to the client
-      let responseHead = `HTTP/1.1 101 Switching Protocols\r\n`;
-      for (const [key, value] of Object.entries(proxyRes.headers)) {
-        responseHead += `${key}: ${value}\r\n`;
-      }
-      responseHead += '\r\n';
-      socket.write(responseHead);
-      if (proxyHead.length > 0) socket.write(proxyHead);
-
-      // Pipe data bidirectionally
-      proxySocket.pipe(socket);
-      socket.pipe(proxySocket);
-
-      proxySocket.on('error', () => socket.destroy());
-      socket.on('error', () => proxySocket.destroy());
-      proxySocket.on('close', () => socket.destroy());
-      socket.on('close', () => proxySocket.destroy());
-    });
-
-    proxyReq.on('error', () => socket.destroy());
-    proxyReq.end();
   } else {
     socket.destroy();
   }
