@@ -1053,14 +1053,18 @@ wss.on('connection', (ws, req) => {
 
   sshProc.stdout.on('data', (data) => {
     if (ws.readyState === WebSocket.OPEN) {
-      // Send as binary frame to avoid UTF-8 validation issues with raw terminal data
-      ws.send(data);
+      // Send SSH data as JSON with base64 encoding to avoid frame corruption
+      try {
+        ws.send(JSON.stringify({ type: 'data', data: Buffer.from(data).toString('base64'), encoding: 'base64' }));
+      } catch (e) { /* skip bad frame */ }
     }
   });
 
   sshProc.stderr.on('data', (data) => {
     if (ws.readyState === WebSocket.OPEN) {
-      ws.send(data);
+      try {
+        ws.send(JSON.stringify({ type: 'data', data: Buffer.from(data).toString('base64'), encoding: 'base64' }));
+      } catch (e) { /* skip bad frame */ }
     }
   });
 
