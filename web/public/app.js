@@ -758,6 +758,8 @@ async function deploy() {
 
 // ── Endpoints ────────────────────────────────────────────────────────────────
 async function loadEndpoints() {
+  const list = document.getElementById('endpoints-list');
+  list.innerHTML = '<div class="mb-loading"><span class="spinner"></span> Loading endpoints...</div>';
   try {
     const res = await authFetch('/api/endpoints');
     if (!res.ok) throw new Error('Failed to load');
