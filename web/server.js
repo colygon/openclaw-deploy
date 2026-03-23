@@ -1192,9 +1192,8 @@ let proxyEndpointCache = {}; // { name: { ip, dashboardToken } }
 // Refresh proxy cache from endpoint list
 async function refreshProxyCache() {
   try {
-    const allEndpoints = [];
     for (const [region, info] of Object.entries(REGIONS)) {
-      const profile = info.profile;
+      const profile = REGION_PROFILES[region];
       if (!profile) continue;
       try {
         const data = nebiusJson('ai endpoint list', profile);
@@ -1207,7 +1206,9 @@ async function refreshProxyCache() {
             };
           }
         }
-      } catch (e) { /* skip region */ }
+      } catch (e) {
+        console.log(`[Proxy] Skipping ${region} (${profile}): ${e.message.split('\n')[0]}`);
+      }
     }
     console.log(`[Proxy] Cache refreshed: ${Object.keys(proxyEndpointCache).length} endpoints`);
   } catch (e) {
