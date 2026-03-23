@@ -1297,6 +1297,60 @@ server.on('upgrade', (request, socket, head) => {
     wssLogs.handleUpgrade(request, socket, head, (ws) => {
       wssLogs.emit('connection', ws, request);
     });
+  } else if (pathname.startsWith('/proxy/')) {
+    // Proxy WebSocket to endpoint's dashboard (port 18789)
+    const parts = pathname.split('/');
+    const endpointName = decodeURIComponent(parts[2]);
+    const endpoint = proxyEndpointCache[endpointName];
+
+    if (!endpoint) {
+      socket.destroy();
+      return;
+    }
+
+    const targetUrl = `ws://${endpoint.ip}:18789`;
+    const targetWs = new WebSocket(targetUrl, { headers: { origin: request.headers.origin || '' } });
+
+    targetWs.on('open', () => {
+      // Complete the upgrade manually by proxying between client and target
+      const clientWs = new WebSocket(null);
+      // Use raw TCP proxy instead
+    });
+
+    // Simpler: use http module to proxy the upgrade
+    const proxyReq = http.request({
+      hostname: endpoint.ip,
+      port: 18789,
+      path: pathname.replace(`/proxy/${parts[2]}/dashboard`, '') || '/',
+      method: 'GET',
+      headers: {
+        ...request.headers,
+        host: `${endpoint.ip}:18789`,
+      }
+    });
+
+    proxyReq.on('upgrade', (proxyRes, proxySocket, proxyHead) => {
+      // Send the upgrade response back to the client
+      let responseHead = `HTTP/1.1 101 Switching Protocols\r\n`;
+      for (const [key, value] of Object.entries(proxyRes.headers)) {
+        responseHead += `${key}: ${value}\r\n`;
+      }
+      responseHead += '\r\n';
+      socket.write(responseHead);
+      if (proxyHead.length > 0) socket.write(proxyHead);
+
+      // Pipe data bidirectionally
+      proxySocket.pipe(socket);
+      socket.pipe(proxySocket);
+
+      proxySocket.on('error', () => socket.destroy());
+      socket.on('error', () => proxySocket.destroy());
+      proxySocket.on('close', () => socket.destroy());
+      socket.on('close', () => proxySocket.destroy());
+    });
+
+    proxyReq.on('error', () => socket.destroy());
+    proxyReq.end();
   } else {
     socket.destroy();
   }

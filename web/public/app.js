@@ -825,7 +825,6 @@ function renderEndpoints() {
     } else {
       actions.push(`<button class="btn-action-pill btn-start" data-action="start" data-id="${esc(ep.id)}" data-name="${esc(ep.name)}">Start</button>`);
     }
-    actions.push(`<button class="btn-action-pill" data-action="logs" data-id="${esc(ep.id)}" data-name="${esc(ep.name)}">Logs</button>`);
     if (ep.publicIp && ep.state === 'RUNNING') {
       actions.push(`<button class="btn-action-pill" data-action="terminal" data-ip="${esc(ep.publicIp)}" data-name="${esc(ep.name)}">Terminal</button>`);
       actions.push(`<button class="btn-action-pill" data-action="dashboard" data-ip="${esc(ep.publicIp)}" data-name="${esc(ep.name)}" ${ep.dashboardToken ? `data-token="${esc(ep.dashboardToken)}"` : ''}>Dashboard</button>`);
@@ -1204,13 +1203,16 @@ function closeLogs() {
 
 // ── Dashboard ────────────────────────────────────────────────────────────────
 async function openDashboard(ip, name, token) {
-  // If we have a stored token, open directly — port 18789 is exposed on new deploys
+  // Route through our HTTPS proxy for secure context (required by Control UI)
   if (token) {
+    const proxyBase = `${location.origin}/proxy/${encodeURIComponent(name)}/dashboard`;
+    const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${wsProto}//${location.host}/proxy/${encodeURIComponent(name)}/dashboard`;
     const hashParams = new URLSearchParams();
     hashParams.set('token', token);
-    hashParams.set('gatewayUrl', `ws://${ip}:18789`);
-    const dashUrl = `http://${ip}:18789/#${hashParams.toString()}`;
-    window.open(dashUrl, `dashboard-${ip}`);
+    hashParams.set('gatewayUrl', wsUrl);
+    const dashUrl = `${proxyBase}/#${hashParams.toString()}`;
+    window.open(dashUrl, `dashboard-${name}`);
     // Auto-approve device pairing in background
     autoPairApprove(ip, token);
     return;
