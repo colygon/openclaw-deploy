@@ -282,19 +282,64 @@ node server.js
 
 ### Cloud Hosting (Nebius VM)
 
-The Deploy UI can be hosted on a Nebius VM for remote access. This requires a small CPU-only instance with Node.js, the Nebius CLI (Linux version), and your SSH keys.
+Host the Deploy UI on a Nebius VM so you can access it from anywhere.
+
+#### 1. Create a small VM
 
 ```bash
-# Provision automatically
-./deploy-cloud.sh
+# From your local machine with nebius CLI installed:
+nebius compute instance create \
+  --name openclaw-deploy-ui \
+  --platform-id cpu-e2 \
+  --preset 2vcpu-8gb \
+  --boot-disk-size 20 \
+  --ssh-key "$(cat ~/.ssh/id_ed25519.pub)" \
+  --parent-id <your-project-id>
+```
 
-# Or manually:
-# 1. Create a cpu-e2/2vcpu-8gb VM with cloud-init
-# 2. Install Node.js 20 + nebius CLI (Linux)
-# 3. Clone repo, npm install, create systemd service
-# 4. Copy ~/.nebius/config.yaml + credentials.yaml (NOT the binary)
-# 5. Copy SSH keys for endpoint access
-# 6. Set up nginx with self-signed HTTPS cert for secure context
+#### 2. Run the setup script
+
+```bash
+# SSH into the VM (find the IP in the Nebius console or CLI output)
+ssh nebius@<VM_IP>
+
+# One-liner setup — installs Node.js, Nebius CLI, nginx (HTTPS), and starts the service
+curl -sSL https://raw.githubusercontent.com/colygon/openclaw-deploy/main/setup-deploy-vm.sh | bash
+```
+
+The script will:
+- Install Node.js 20, Nebius CLI, and nginx
+- Clone the repo and install dependencies
+- Generate SSH keys for endpoint access
+- Set up nginx with a self-signed HTTPS certificate
+- Create a systemd service that auto-starts on boot
+- Open a browser login for Nebius authentication
+
+#### 3. Access the UI
+
+Open `https://<VM_IP>` in your browser (accept the self-signed cert warning).
+
+#### Updating
+
+```bash
+cd ~/openclaw-deploy && git pull && sudo systemctl restart openclaw-deploy
+```
+
+#### Troubleshooting
+
+```bash
+# Check service status
+sudo systemctl status openclaw-deploy
+
+# Live logs
+sudo journalctl -u openclaw-deploy -f
+
+# Restart
+sudo systemctl restart openclaw-deploy
+
+# Re-authenticate with Nebius (if token expired)
+nebius iam login
+sudo systemctl restart openclaw-deploy
 ```
 
 **Critical**: Do NOT copy the macOS `~/.nebius/bin/` directory to Linux — it contains a Mach-O ARM64 binary. Only copy config files (`config.yaml`, `credentials.yaml`, `sa-credentials.json`), then reinstall the CLI on the VM with:
