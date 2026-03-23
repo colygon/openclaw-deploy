@@ -1,8 +1,19 @@
 # 🦞 OpenClaw Deploy
 
-Web UI for deploying [OpenClaw](https://github.com/nichochar/openclaw) AI agents to [Nebius Cloud](https://nebius.com).
+Deploy [OpenClaw](https://github.com/nichochar/openclaw) AI agents to [Nebius Cloud](https://nebius.com) — via a web UI, CLI scripts, or GPU VMs.
 
-## Features
+This repo provides everything you need to run OpenClaw on Nebius infrastructure: a browser-based deployment tool, shell scripts for automated setup, container images, and a comprehensive setup guide covering multi-region deployments, Token Factory / OpenRouter / HuggingFace integration, SSH access, and troubleshooting.
+
+## Deploy Options
+
+| Method | How | Best For |
+|--------|-----|----------|
+| **Web UI** | `npm start` or [one-command VM setup](#deploy-to-a-nebius-vm) | Visual deploy, endpoint management, terminal access |
+| **CLI Scripts** | `./install-openclaw-serverless.sh` | Automated, scriptable, CI/CD |
+| **GPU VM** | `./install-nemoclaw-vm.sh` | Self-hosted inference with local vLLM |
+| **Step-by-step** | Follow the [Nebius Setup Guide](NEBIUS-SETUP-GUIDE.md) | Learning, custom configurations |
+
+## Web UI Features
 
 - **One-click deploy** — Choose agent, model, region, provider and deploy
 - **Multi-provider** — Token Factory, OpenRouter, or HuggingFace (all routed through Nebius GPUs)
