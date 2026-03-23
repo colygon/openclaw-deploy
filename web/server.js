@@ -1053,13 +1053,14 @@ wss.on('connection', (ws, req) => {
 
   sshProc.stdout.on('data', (data) => {
     if (ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: 'data', data: data.toString('utf-8') }));
+      // Send as binary frame to avoid UTF-8 validation issues with raw terminal data
+      ws.send(data);
     }
   });
 
   sshProc.stderr.on('data', (data) => {
     if (ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: 'data', data: data.toString('utf-8') }));
+      ws.send(data);
     }
   });
 

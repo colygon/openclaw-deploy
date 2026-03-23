@@ -1023,12 +1023,22 @@ function connectTerminalWs(ip) {
   const wsUrl = `${proto}//${window.location.host}/ws/terminal?ip=${encodeURIComponent(ip)}`;
 
   terminalWs = new WebSocket(wsUrl);
+  terminalWs.binaryType = 'arraybuffer';
 
   terminalWs.onopen = () => {
     console.log('[Terminal] WebSocket connected');
   };
 
   terminalWs.onmessage = (event) => {
+    // Binary frames = raw SSH terminal data
+    if (event.data instanceof ArrayBuffer) {
+      const text = new TextDecoder('utf-8', { fatal: false }).decode(event.data);
+      terminal.write(text);
+      setTerminalStatus('connected');
+      return;
+    }
+
+    // Text frames = JSON control messages (status, error, exit)
     try {
       const msg = JSON.parse(event.data);
 
@@ -1050,7 +1060,6 @@ function connectTerminalWs(ip) {
           break;
       }
     } catch (e) {
-      // Raw data fallback
       terminal.write(event.data);
     }
   };
