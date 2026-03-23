@@ -1007,7 +1007,7 @@ app.get('/api/tunnels', requireAuth, (req, res) => {
 });
 
 // ── WebSocket SSH Terminal ─────────────────────────────────────────────────
-const wss = new WebSocket.Server({ server, path: '/ws/terminal', perMessageDeflate: false });
+const wss = new WebSocket.Server({ noServer: true, perMessageDeflate: false });
 
 wss.on('connection', (ws, req) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
@@ -1111,7 +1111,7 @@ wss.on('connection', (ws, req) => {
 });
 
 // ── WebSocket Logs Stream ─────────────────────────────────────────────────
-const wssLogs = new WebSocket.Server({ server, path: '/ws/logs', perMessageDeflate: false });
+const wssLogs = new WebSocket.Server({ noServer: true, perMessageDeflate: false });
 
 wssLogs.on('connection', (ws, req) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
@@ -1283,6 +1283,23 @@ app.get('/api/proxy-urls', requireAuth, (req, res) => {
 // ── SPA fallback ───────────────────────────────────────────────────────────
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+// ── WebSocket upgrade handler (manual routing to avoid middleware interference) ──
+server.on('upgrade', (request, socket, head) => {
+  const { pathname } = new URL(request.url, `http://${request.headers.host}`);
+
+  if (pathname === '/ws/terminal') {
+    wss.handleUpgrade(request, socket, head, (ws) => {
+      wss.emit('connection', ws, request);
+    });
+  } else if (pathname === '/ws/logs') {
+    wssLogs.handleUpgrade(request, socket, head, (ws) => {
+      wssLogs.emit('connection', ws, request);
+    });
+  } else {
+    socket.destroy();
+  }
 });
 
 // ── Start server ───────────────────────────────────────────────────────────
