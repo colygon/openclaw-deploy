@@ -759,6 +759,12 @@ app.post('/api/deploy', requireAuth, async (req, res) => {
     let sshPubKey = '';
     if (sshKey) {
       const pubPath = sshKey + '.pub';
+      // Generate .pub from private key if it doesn't exist
+      if (!fs.existsSync(pubPath)) {
+        try {
+          execSync(`ssh-keygen -y -f "${sshKey}" > "${pubPath}"`, { encoding: 'utf-8' });
+        } catch (e) { /* ignore */ }
+      }
       if (fs.existsSync(pubPath)) {
         sshPubKey = fs.readFileSync(pubPath, 'utf-8').trim();
       }
