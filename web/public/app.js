@@ -129,11 +129,19 @@ function setupDelegatedListeners() {
     selectTokenFactoryModel(item.dataset.modelId, item);
   });
 
-  // MysteryBox secret items
-  document.getElementById('mb-secrets').addEventListener('click', (e) => {
+  // MysteryBox secret items (delegated across all provider secret lists)
+  document.addEventListener('click', (e) => {
     const item = e.target.closest('[data-secret-id]');
-    if (!item) return;
+    if (!item || !item.closest('.mb-secrets-list')) return;
     selectMysteryBoxSecret(item.dataset.secretId, item);
+  });
+
+  // Copy button clicks
+  document.addEventListener('click', (e) => {
+    const copyBtn = e.target.closest('[data-copy]');
+    if (copyBtn) {
+      copyToClipboard(copyBtn.dataset.copy);
+    }
   });
 }
 
@@ -179,6 +187,7 @@ async function checkAuth() {
       loadRegions();
       loadProviders();
       loadEndpoints();
+      loadMysteryBoxSecrets();
     } else {
       show('login-screen');
       hide('main-app');
@@ -519,46 +528,45 @@ function getActiveApiKey() {
 }
 
 // ── MysteryBox ──────────────────────────────────────────────────────────────
+let mysteryBoxSecrets = []; // cached secrets
+
 async function loadMysteryBoxSecrets() {
-  const container = document.getElementById('mb-secrets');
-  const btn = document.getElementById('mb-btn');
-
-  // Toggle off if already visible
-  if (!container.classList.contains('hidden')) {
-    container.classList.add('hidden');
-    return;
-  }
-
-  container.classList.remove('hidden');
-  container.innerHTML = '<div class="mb-loading"><span class="spinner"></span> Loading secrets...</div>';
-  btn.disabled = true;
+  // Show loading in all provider secret lists
+  const containers = ['mb-secrets-tf', 'mb-secrets-openrouter', 'mb-secrets-huggingface'];
+  containers.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.innerHTML = '<div class="mb-loading"><span class="spinner"></span> Loading secrets...</div>';
+  });
 
   try {
     const res = await authFetch('/api/secrets');
-    const secrets = await res.json();
+    mysteryBoxSecrets = await res.json();
 
-    if (secrets.length === 0) {
-      container.innerHTML = '<div class="mb-empty">No secrets found in MysteryBox</div>';
-      btn.disabled = false;
-      return;
-    }
+    const activeSecrets = mysteryBoxSecrets.filter(s => s.state === 'ACTIVE');
 
-    container.innerHTML = secrets
-      .filter(s => s.state === 'ACTIVE')
-      .map(s => `
-        <div class="mb-secret-item" data-secret-id="${esc(s.id)}">
-          <div>
-            <div class="mb-secret-name">${esc(s.name)}</div>
-            ${s.description ? `<div class="mb-secret-desc">${esc(s.description)}</div>` : ''}
+    const html = activeSecrets.length === 0
+      ? '<div class="mb-empty">No secrets in MysteryBox · <a href="https://console.nebius.com/mysterybox" target="_blank">Create one</a></div>'
+      : activeSecrets.map(s => `
+          <div class="mb-secret-item" data-secret-id="${esc(s.id)}">
+            <div class="mb-secret-info">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+              <span class="mb-secret-name">${esc(s.name)}</span>
+              ${s.description ? `<span class="mb-secret-desc">· ${esc(s.description)}</span>` : ''}
+            </div>
+            <span class="mb-secret-badge">Use</span>
           </div>
-          <span class="mb-secret-badge">select</span>
-        </div>
-      `).join('');
-  } catch (err) {
-    container.innerHTML = `<div class="mb-empty">Failed to load secrets: ${esc(err.message)}</div>`;
-  }
+        `).join('');
 
-  btn.disabled = false;
+    containers.forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.innerHTML = html;
+    });
+  } catch (err) {
+    containers.forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.innerHTML = '';
+    });
+  }
 }
 
 async function selectMysteryBoxSecret(secretId, el) {
@@ -571,25 +579,36 @@ async function selectMysteryBoxSecret(secretId, el) {
     const payload = await res.json();
 
     if (res.ok) {
-      // Find the first value that looks like a Token Factory key
-      const apiKeyField = document.getElementById('tf-api-key');
-      const value = payload.TOKEN_API_KEY || payload.TOKEN_FACTORY_API_KEY || payload.api_key || Object.values(payload)[0] || '';
+      // Determine which API key field to fill based on active provider
+      const fieldMap = {
+        'token-factory': 'tf-api-key',
+        'openrouter': 'openrouter-api-key',
+        'huggingface': 'huggingface-api-key'
+      };
+      const fieldId = fieldMap[state.selectedProvider] || 'tf-api-key';
+      const apiKeyField = document.getElementById(fieldId);
+
+      // Try common key names, then fall back to first value
+      const value = payload.TOKEN_API_KEY || payload.TOKEN_FACTORY_API_KEY || payload.OPENROUTER_API_KEY
+        || payload.HUGGINGFACE_API_KEY || payload.HF_TOKEN || payload.api_key || Object.values(payload)[0] || '';
 
       if (value) {
         apiKeyField.value = value;
         updateDeployButton();
 
-        // Show success
         if (badge) {
-          badge.textContent = 'loaded';
+          badge.textContent = '✓ loaded';
           badge.style.background = 'rgba(34, 197, 94, 0.15)';
           badge.style.color = 'var(--green)';
         }
-
-        // Hide the list after a moment
+        // Reset badge after a moment
         setTimeout(() => {
-          document.getElementById('mb-secrets').classList.add('hidden');
-        }, 800);
+          if (badge) {
+            badge.textContent = 'Use';
+            badge.style.background = '';
+            badge.style.color = '';
+          }
+        }, 2000);
       } else {
         if (badge) badge.textContent = 'empty';
       }
@@ -603,6 +622,42 @@ async function selectMysteryBoxSecret(secretId, el) {
       badge.style.color = 'var(--red)';
     }
     el.classList.remove('loading');
+  }
+}
+
+async function saveToMysteryBox(provider) {
+  const fieldMap = { 'tf': 'tf-api-key', 'openrouter': 'openrouter-api-key', 'huggingface': 'huggingface-api-key' };
+  const keyNameMap = { 'tf': 'TOKEN_FACTORY_API_KEY', 'openrouter': 'OPENROUTER_API_KEY', 'huggingface': 'HF_TOKEN' };
+  const defaultNameMap = { 'tf': 'token-factory-key', 'openrouter': 'openrouter-key', 'huggingface': 'huggingface-key' };
+
+  const apiKeyField = document.getElementById(fieldMap[provider]);
+  const value = apiKeyField?.value?.trim();
+
+  if (!value) {
+    alert('Enter an API key first, then click Save to store it in MysteryBox.');
+    return;
+  }
+
+  const name = prompt('Secret name:', defaultNameMap[provider]);
+  if (!name) return;
+
+  try {
+    const res = await authFetch('/api/secrets', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, key: keyNameMap[provider], value })
+    });
+
+    const data = await res.json();
+
+    if (res.ok) {
+      // Refresh the secrets list
+      loadMysteryBoxSecrets();
+    } else {
+      alert('Failed to save: ' + (data.error || 'Unknown error'));
+    }
+  } catch (err) {
+    alert('Failed to save: ' + err.message);
   }
 }
 

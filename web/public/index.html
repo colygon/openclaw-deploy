@@ -136,26 +136,40 @@
                   <label>Token Factory API Key</label>
                   <div class="api-key-row">
                     <input type="password" id="tf-api-key" placeholder="v1.xxx..." />
-                    <button class="btn btn-sm btn-mysterybox" id="mb-btn" onclick="loadMysteryBoxSecrets()" title="Load from MysteryBox">
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-                      MysteryBox
+                    <button class="btn btn-sm btn-save-secret" onclick="saveToMysteryBox('tf')" title="Save to MysteryBox">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/><line x1="12" y1="15" x2="12" y2="18"/></svg>
+                      Save
                     </button>
                   </div>
-                  <div id="mb-secrets" class="mb-secrets hidden"></div>
-                  <span class="form-hint">Paste a key or load from <a href="https://console.nebius.com/mysterybox" target="_blank">MysteryBox</a></span>
+                  <div id="mb-secrets-tf" class="mb-secrets-list"></div>
+                  <span class="form-hint">Paste a key, select from <a href="https://console.nebius.com/mysterybox" target="_blank">MysteryBox</a>, or save a new one</span>
                 </div>
 
                 <!-- API Key (OpenRouter) -->
                 <div class="form-group hidden" id="api-key-group-openrouter">
                   <label>OpenRouter API Key</label>
-                  <input type="password" id="openrouter-api-key" placeholder="sk-or-v1-xxx..." />
+                  <div class="api-key-row">
+                    <input type="password" id="openrouter-api-key" placeholder="sk-or-v1-xxx..." />
+                    <button class="btn btn-sm btn-save-secret" onclick="saveToMysteryBox('openrouter')" title="Save to MysteryBox">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/><line x1="12" y1="15" x2="12" y2="18"/></svg>
+                      Save
+                    </button>
+                  </div>
+                  <div id="mb-secrets-openrouter" class="mb-secrets-list"></div>
                   <span class="form-hint">Get a key from <a href="https://openrouter.ai/keys" target="_blank">openrouter.ai/keys</a> · Routed to Nebius only</span>
                 </div>
 
                 <!-- API Key (HuggingFace) -->
                 <div class="form-group hidden" id="api-key-group-huggingface">
                   <label>HuggingFace API Key</label>
-                  <input type="password" id="huggingface-api-key" placeholder="hf_xxx..." />
+                  <div class="api-key-row">
+                    <input type="password" id="huggingface-api-key" placeholder="hf_xxx..." />
+                    <button class="btn btn-sm btn-save-secret" onclick="saveToMysteryBox('huggingface')" title="Save to MysteryBox">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/><line x1="12" y1="15" x2="12" y2="18"/></svg>
+                      Save
+                    </button>
+                  </div>
+                  <div id="mb-secrets-huggingface" class="mb-secrets-list"></div>
                   <span class="form-hint">Get a key from <a href="https://huggingface.co/settings/tokens" target="_blank">huggingface.co/settings/tokens</a> · Provider: Nebius</span>
                 </div>
               </div>

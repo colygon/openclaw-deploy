@@ -334,6 +334,74 @@ app.get('/api/secrets/:id/payload', requireAuth, (req, res) => {
   }
 });
 
+// Create a new secret in MysteryBox
+app.post('/api/secrets', requireAuth, (req, res) => {
+  if (IS_VERCEL) return res.json({ id: 'demo-new-secret', name: req.body.name });
+
+  const { name, key, value } = req.body;
+  if (!name || !key || !value) {
+    return res.status(400).json({ error: 'name, key, and value are required' });
+  }
+
+  // Sanitize name (alphanumeric, hyphens, underscores only)
+  const safeName = name.replace(/[^a-zA-Z0-9_-]/g, '-').substring(0, 64);
+
+  // Find a project ID to use as parent
+  const projectId = Object.values(REGIONS)[0]?.projectId;
+  if (!projectId) {
+    return res.status(500).json({ error: 'No project configured. Check Nebius CLI setup.' });
+  }
+
+  try {
+    const payloadJson = JSON.stringify([{ key, string_value: value }]);
+    const result = nebius(
+      `mysterybox secret create --name "${safeName}" --parent-id ${projectId} --secret-version-payload '${payloadJson}' --format json`
+    );
+    const parsed = JSON.parse(result);
+    res.json({
+      id: parsed.metadata?.id || 'unknown',
+      name: safeName,
+      message: 'Secret created'
+    });
+  } catch (err) {
+    // If secret already exists, try to update it instead
+    if (err.message.includes('AlreadyExists')) {
+      try {
+        // Find the existing secret ID
+        const existing = nebiusJson('mysterybox secret list');
+        const found = (existing.items || []).find(s => s.metadata?.name === safeName);
+        if (found) {
+          const payloadJson = JSON.stringify([{ key, string_value: value }]);
+          nebius(`mysterybox secret-version create --parent-id ${found.metadata.id} --payload '${payloadJson}' --set-primary --format json`);
+          return res.json({ id: found.metadata.id, name: safeName, message: 'Secret updated (new version)' });
+        }
+      } catch (updateErr) {
+        return res.status(500).json({ error: `Failed to update existing secret: ${updateErr.message.split('\n')[0]}` });
+      }
+    }
+    res.status(500).json({ error: `Failed to create secret: ${err.message.split('\n')[0]}` });
+  }
+});
+
+// Update an existing secret's payload (creates new version)
+app.put('/api/secrets/:id', requireAuth, (req, res) => {
+  if (IS_VERCEL) return res.json({ message: 'Secret updated (demo)' });
+
+  const { key, value } = req.body;
+  if (!key || !value) {
+    return res.status(400).json({ error: 'key and value are required' });
+  }
+
+  try {
+    const id = validateId(req.params.id);
+    const payloadJson = JSON.stringify([{ key, string_value: value }]);
+    nebius(`mysterybox secret-version create --parent-id ${id} --payload '${payloadJson}' --set-primary --format json`);
+    res.json({ message: 'Secret updated' });
+  } catch (err) {
+    res.status(500).json({ error: `Failed to update secret: ${err.message.split('\n')[0]}` });
+  }
+});
+
 // ── Routes: Config ─────────────────────────────────────────────────────────
 
 app.get('/api/regions', (req, res) => {
