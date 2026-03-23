@@ -795,6 +795,32 @@ app.delete('/api/endpoints/:id', requireAuth, (req, res) => {
   }
 });
 
+app.post('/api/endpoints/:id/stop', requireAuth, (req, res) => {
+  if (IS_VERCEL) return res.json({ status: 'demo' });
+  try {
+    const id = validateId(req.params.id);
+    exec(`nebius ai endpoint stop --id ${id}`, { timeout: 120000 }, (err) => {
+      if (err) console.error('Stop error:', err.message);
+    });
+    res.json({ status: 'stopping', id });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/endpoints/:id/start', requireAuth, (req, res) => {
+  if (IS_VERCEL) return res.json({ status: 'demo' });
+  try {
+    const id = validateId(req.params.id);
+    exec(`nebius ai endpoint start --id ${id}`, { timeout: 120000 }, (err) => {
+      if (err) console.error('Start error:', err.message);
+    });
+    res.json({ status: 'starting', id });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── Routes: SSH Tunnel for Dashboard ──────────────────────────────────────
 const activeTunnels = {}; // { ip: { proc, localPort } }
 let nextTunnelPort = 19000;

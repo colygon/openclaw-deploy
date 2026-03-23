@@ -104,6 +104,8 @@ function setupDelegatedListeners() {
       case 'terminal': openTerminal(ip, name); break;
       case 'dashboard': openDashboard(ip, name, token); break;
       case 'logs': openLogs(id, name); break;
+      case 'stop': stopEndpoint(id, name); break;
+      case 'start': startEndpoint(id, name); break;
       case 'delete': deleteEndpoint(id, name); break;
     }
   });
@@ -842,6 +844,9 @@ function renderEndpoints() {
         <div class="kebab-menu">
           <button class="btn-kebab" onclick="toggleKebab(this)">&#8942;</button>
           <div class="kebab-dropdown hidden">
+            ${ep.state === 'RUNNING' || ep.state === 'STARTING'
+              ? `<button class="kebab-item" data-action="stop" data-id="${esc(ep.id)}" data-name="${esc(ep.name)}">Stop endpoint</button>`
+              : `<button class="kebab-item" data-action="start" data-id="${esc(ep.id)}" data-name="${esc(ep.name)}">Start endpoint</button>`}
             <button class="kebab-item kebab-delete" data-action="delete" data-id="${esc(ep.id)}" data-name="${esc(ep.name)}">Delete endpoint</button>
           </div>
         </div>
@@ -894,6 +899,28 @@ async function deleteEndpoint(id, name) {
     setTimeout(loadEndpoints, 2000);
   } catch (err) {
     alert('Delete failed: ' + err.message);
+  }
+}
+
+async function stopEndpoint(id, name) {
+  if (!confirm(`Stop endpoint "${name}"?`)) return;
+  try {
+    const res = await authFetch(`/api/endpoints/${encodeURIComponent(id)}/stop`, { method: 'POST' });
+    if (!res.ok) { const d = await res.json(); throw new Error(d.error || 'Stop failed'); }
+    loadEndpoints();
+  } catch (err) {
+    alert('Stop failed: ' + err.message);
+  }
+}
+
+async function startEndpoint(id, name) {
+  if (!confirm(`Start endpoint "${name}"?`)) return;
+  try {
+    const res = await authFetch(`/api/endpoints/${encodeURIComponent(id)}/start`, { method: 'POST' });
+    if (!res.ok) { const d = await res.json(); throw new Error(d.error || 'Start failed'); }
+    loadEndpoints();
+  } catch (err) {
+    alert('Start failed: ' + err.message);
   }
 }
 
