@@ -454,7 +454,7 @@ body {
 /* ── Endpoints Table Header ──────────────────────────────────────── */
 .endpoints-table-header {
   display: grid;
-  grid-template-columns: 2fr 100px 1.5fr 1.5fr 100px 160px;
+  grid-template-columns: minmax(180px, 2fr) 80px 80px minmax(auto, 280px);
   gap: 0.5rem;
   padding: 0.6rem 1.2rem;
   margin: 0 2rem;
@@ -473,9 +473,34 @@ body {
   padding: 0 2rem;
 }
 
+.endpoints-footer {
+  padding: 1.5rem 2rem;
+  text-align: center;
+}
+
+.btn-create-endpoint {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 2rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #fff;
+  background: var(--accent);
+  border: none;
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: background 0.15s, transform 0.1s;
+}
+
+.btn-create-endpoint:hover {
+  background: var(--accent-hover);
+  transform: translateY(-1px);
+}
+
 .endpoint-row {
   display: grid;
-  grid-template-columns: 2fr 100px 1.5fr 1.5fr 100px 160px;
+  grid-template-columns: minmax(180px, 2fr) 80px 80px minmax(auto, 280px);
   gap: 0.5rem;
   align-items: center;
   padding: 0.85rem 1.2rem;
@@ -483,6 +508,44 @@ body {
   border: 1px solid var(--border);
   border-top: none;
   transition: background 0.12s ease;
+  cursor: pointer;
+}
+
+.endpoint-details {
+  display: none;
+  grid-column: 1 / -1;
+  padding: 0.75rem 0 0.25rem 0;
+  margin-top: 0.5rem;
+  border-top: 1px solid var(--border);
+  gap: 1rem;
+}
+
+.endpoint-row.expanded .endpoint-details {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+}
+
+.endpoint-detail-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.endpoint-detail-label {
+  font-size: 0.65rem;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.endpoint-detail-value {
+  font-size: 0.82rem;
+  color: var(--text);
+}
+
+.endpoint-detail-value .endpoint-id {
+  font-size: 0.72rem;
 }
 
 .endpoint-row:first-child {
@@ -538,9 +601,7 @@ body {
   font-weight: 600;
   font-size: 0.9rem;
   color: var(--text-bright);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  word-break: break-word;
 }
 
 .endpoint-id {
@@ -645,8 +706,9 @@ body {
 .col-actions {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
+  gap: 0.35rem;
   justify-content: flex-end;
+  flex-wrap: wrap;
 }
 
 /* ── Action Pill Buttons ─────────────────────────────────────────── */
@@ -1313,6 +1375,76 @@ input::placeholder { color: #555566; }
 
 #terminal-container .xterm {
   height: 100%;
+}
+
+/* ── Logs Panel ───────────────────────────────────────────────────── */
+.logs-panel {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: #0c0c14;
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  transition: transform 0.3s ease;
+}
+
+.logs-panel.hidden {
+  display: flex !important;
+  transform: translateY(100%);
+  pointer-events: none;
+}
+
+.logs-panel:not(.hidden) {
+  transform: translateY(0);
+}
+
+.logs-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.5rem 1rem;
+  background: #141418;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.logs-header-left {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  color: var(--accent);
+}
+
+.logs-header-left svg {
+  flex-shrink: 0;
+}
+
+#logs-title {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-bright);
+}
+
+.logs-header-right {
+  display: flex;
+  gap: 0.5rem;
+}
+
+#logs-terminal {
+  flex: 1;
+  padding: 4px;
+  overflow: hidden;
+}
+
+#logs-terminal .xterm {
+  height: 100%;
+}
+
+body.logs-open {
+  overflow: hidden;
 }
 
 /* When terminal is open, hide scrolling behind it */

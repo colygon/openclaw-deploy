@@ -504,6 +504,7 @@ app.get('/api/endpoints', requireAuth, async (req, res) => {
           publicIp: ep.status.instances?.[0]?.public_ip || null,
           image: ep.spec.image,
           platform: ep.spec.platform,
+          preset: ep.spec.preset || null,
           region: detectedRegion,
           regionName: ri.name || detectedRegion || 'Unknown',
           regionFlag: ri.flag || '🌐',
@@ -1042,6 +1043,75 @@ wss.on('connection', (ws, req) => {
   ws.on('close', () => {
     console.log(`[Terminal] WebSocket closed for ${ip}`);
     sshProc.kill('SIGTERM');
+  });
+});
+
+// ── WebSocket Logs Stream ─────────────────────────────────────────────────
+const wssLogs = new WebSocket.Server({ server, path: '/ws/logs' });
+
+wssLogs.on('connection', (ws, req) => {
+  const url = new URL(req.url, `http://${req.headers.host}`);
+  const endpointId = url.searchParams.get('id');
+
+  if (!endpointId || !/^[a-zA-Z0-9_-]+$/.test(endpointId)) {
+    ws.send(JSON.stringify({ type: 'error', data: 'Invalid endpoint ID' }));
+    ws.close();
+    return;
+  }
+
+  // Find the profile for this endpoint
+  let profile = null;
+  for (const [region, info] of Object.entries(REGIONS)) {
+    if (info.profile) {
+      try {
+        const data = nebiusJson('ai endpoint list', info.profile);
+        if ((data.items || []).some(ep => ep.metadata.id === endpointId)) {
+          profile = info.profile;
+          break;
+        }
+      } catch (e) { /* skip */ }
+    }
+  }
+
+  console.log(`[Logs] Streaming logs for ${endpointId}...`);
+  ws.send(JSON.stringify({ type: 'status', data: `Connecting to logs for ${endpointId}...\r\n` }));
+
+  const args = ['ai', 'endpoint', 'logs', endpointId, '--follow', '--timestamps', '--tail', '100'];
+  if (profile) args.push('--profile', profile);
+
+  const logProc = spawn('nebius', args, { env: { ...process.env, PATH: process.env.PATH } });
+
+  logProc.stdout.on('data', (data) => {
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'data', data: data.toString('utf-8') }));
+    }
+  });
+
+  logProc.stderr.on('data', (data) => {
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'data', data: data.toString('utf-8') }));
+    }
+  });
+
+  logProc.on('close', (code) => {
+    console.log(`[Logs] Stream ended for ${endpointId} (code ${code})`);
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'exit', code }));
+      ws.close();
+    }
+  });
+
+  logProc.on('error', (err) => {
+    console.error(`[Logs] Error for ${endpointId}:`, err.message);
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'error', data: `Logs error: ${err.message}` }));
+      ws.close();
+    }
+  });
+
+  ws.on('close', () => {
+    console.log(`[Logs] WebSocket closed for ${endpointId}`);
+    logProc.kill('SIGTERM');
   });
 });
 

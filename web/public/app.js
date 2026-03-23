@@ -38,6 +38,13 @@ function formatPlatform(platform) {
   return names[platform] || platform || 'Standard';
 }
 
+function formatPreset(preset) {
+  // "2vcpu-8gb" → "2 vCPUs, 8 GiB"
+  const m = preset.match(/^(\d+)vcpu-(\d+)gb$/i);
+  if (m) return `${m[1]} vCPU${m[1] === '1' ? '' : 's'}, ${m[2]} GiB`;
+  return preset;
+}
+
 function formatDate(iso) {
   if (!iso) return '\u2014';
   const d = new Date(iso), now = new Date(), diff = now - d;
@@ -96,6 +103,7 @@ function setupDelegatedListeners() {
     switch (action) {
       case 'terminal': openTerminal(ip, name); break;
       case 'dashboard': openDashboard(ip, name, token); break;
+      case 'logs': openLogs(id, name); break;
       case 'delete': deleteEndpoint(id, name); break;
     }
   });
@@ -393,15 +401,22 @@ async function loadTokenFactoryModels() {
       return;
     }
 
-    list.innerHTML = models.map(m => `
-      <div class="model-item ${state.selectedModel === m.id ? 'selected' : ''}" data-model-id="${esc(m.id)}">
-        <div class="model-item-info">
-          <div class="model-item-name">${esc(m.id)}</div>
-          ${m.owned_by ? `<div class="model-item-owner">${esc(m.owned_by)}</div>` : ''}
+    list.innerHTML = models.map(m => {
+      // Extract org from model ID (e.g., "deepseek-ai/DeepSeek-R1" → "deepseek-ai")
+      const org = m.id.includes('/') ? m.id.split('/')[0] : '';
+      const shortName = m.id.includes('/') ? m.id.split('/').slice(1).join('/') : m.id;
+      // Show owned_by only if it's meaningful (not "system")
+      const owner = m.owned_by && m.owned_by !== 'system' ? m.owned_by : org;
+      return `
+        <div class="model-item ${state.selectedModel === m.id ? 'selected' : ''}" data-model-id="${esc(m.id)}">
+          <div class="model-item-info">
+            <div class="model-item-name">${esc(shortName)}</div>
+            ${owner ? `<div class="model-item-owner">${esc(owner)}</div>` : ''}
+          </div>
+          <span class="model-item-badge">select</span>
         </div>
-        <span class="model-item-badge">select</span>
-      </div>
-    `).join('');
+      `;
+    }).join('');
   } catch (err) {
     list.innerHTML = `<div class="mb-empty">Failed to load models: ${esc(err.message)}</div>`;
   }
@@ -471,7 +486,7 @@ const PROVIDERS = {
   'openrouter': {
     name: 'OpenRouter',
     icon: '🔀',
-    description: 'Multi-provider router — Nebius only'
+    description: 'Unified API for AI models'
   },
   'huggingface': {
     name: 'Hugging Face',
@@ -797,39 +812,27 @@ function renderEndpoints() {
 
   list.innerHTML = filtered.map(ep => {
     const h = ep.health;
-    const healthInfo = h
-      ? `<div class="endpoint-health">
-          <span class="health-service">${esc(h.service || 'unknown')}</span>
-          <span class="health-model" title="${esc(h.model || '')}">${esc((h.model || '').split('/').pop())}</span>
-          <span class="health-inference">${esc(h.inference || '')}</span>
-        </div>`
-      : (ep.publicIp
-          ? '<span class="endpoint-ip">loading health...</span>'
-          : '<span class="endpoint-ip">pending...</span>');
+    const presetLabel = ep.preset ? formatPreset(ep.preset) : '';
+    const model = h?.model ? (h.model.split('/').pop()) : '';
 
     const actions = [];
+    actions.push(`<button class="btn-action-pill" data-action="logs" data-id="${esc(ep.id)}" data-name="${esc(ep.name)}">Logs</button>`);
     if (ep.publicIp && ep.state === 'RUNNING') {
       actions.push(`<button class="btn-action-pill" data-action="terminal" data-ip="${esc(ep.publicIp)}" data-name="${esc(ep.name)}">Terminal</button>`);
       actions.push(`<button class="btn-action-pill" data-action="dashboard" data-ip="${esc(ep.publicIp)}" data-name="${esc(ep.name)}" ${ep.dashboardToken ? `data-token="${esc(ep.dashboardToken)}"` : ''}>Dashboard</button>`);
     }
     const actionButtons = actions.join('');
 
-    return `<div class="endpoint-row" data-state="${esc(ep.state)}">
+    return `<div class="endpoint-row" data-state="${esc(ep.state)}" onclick="toggleEndpointExpand(this, event)">
       <div class="endpoint-col col-name">
         <div class="endpoint-icon">${ep.image?.includes('nemoclaw') ? '\uD83D\uDD31' : '\uD83E\uDD9E'}</div>
         <div class="endpoint-name-group">
           <span class="endpoint-name">${esc(ep.name)}</span>
-          <span class="endpoint-id">${esc(ep.id)} <button class="btn-copy" data-copy="${esc(ep.id)}" title="Copy ID"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button></span>
         </div>
       </div>
       <div class="endpoint-col col-status">
         <span class="status-badge status-${esc(ep.state)}">${formatState(ep.state)}</span>
       </div>
-      <div class="endpoint-col col-platform">
-        <div>${esc(formatPlatform(ep.platform))}</div>
-        <div class="platform-region">${esc(ep.regionFlag)} ${esc(ep.regionName)}</div>
-      </div>
-      <div class="endpoint-col col-resources">${healthInfo}</div>
       <div class="endpoint-col col-created">${formatDate(ep.createdAt)}</div>
       <div class="endpoint-col col-actions">
         ${actionButtons}
@@ -840,8 +843,44 @@ function renderEndpoints() {
           </div>
         </div>
       </div>
+      <div class="endpoint-details">
+        <div class="endpoint-detail-item">
+          <span class="endpoint-detail-label">ID</span>
+          <span class="endpoint-detail-value"><span class="endpoint-id">${esc(ep.id)} <button class="btn-copy" data-copy="${esc(ep.id)}" title="Copy ID"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button></span></span>
+        </div>
+        <div class="endpoint-detail-item">
+          <span class="endpoint-detail-label">Platform</span>
+          <span class="endpoint-detail-value">${esc(formatPlatform(ep.platform))}</span>
+        </div>
+        <div class="endpoint-detail-item">
+          <span class="endpoint-detail-label">Region</span>
+          <span class="endpoint-detail-value">${esc(ep.regionFlag)} ${esc(ep.regionName)}</span>
+        </div>
+        <div class="endpoint-detail-item">
+          <span class="endpoint-detail-label">Resources</span>
+          <span class="endpoint-detail-value">${esc(presetLabel || 'pending...')}</span>
+        </div>
+        ${model ? `<div class="endpoint-detail-item">
+          <span class="endpoint-detail-label">Model</span>
+          <span class="endpoint-detail-value">${esc(model)}</span>
+        </div>` : ''}
+        ${h?.inference ? `<div class="endpoint-detail-item">
+          <span class="endpoint-detail-label">Inference</span>
+          <span class="endpoint-detail-value">${esc(h.inference)}</span>
+        </div>` : ''}
+        ${ep.publicIp ? `<div class="endpoint-detail-item">
+          <span class="endpoint-detail-label">IP Address</span>
+          <span class="endpoint-detail-value">${esc(ep.publicIp)}</span>
+        </div>` : ''}
+      </div>
     </div>`;
   }).join('');
+}
+
+function toggleEndpointExpand(row, event) {
+  // Don't toggle if clicking a button or link
+  if (event.target.closest('button, a, .kebab-menu')) return;
+  row.classList.toggle('expanded');
 }
 
 async function deleteEndpoint(id, name) {
@@ -1031,6 +1070,95 @@ function reconnectTerminal() {
     }
     connectTerminalWs(currentTerminalIp);
   }
+}
+
+// ── Logs Viewer ──────────────────────────────────────────────────────────────
+let logsWs = null;
+let logsTerminal = null;
+
+function openLogs(endpointId, name) {
+  const panel = document.getElementById('logs-panel');
+  const title = document.getElementById('logs-title');
+  const container = document.getElementById('logs-terminal');
+
+  title.textContent = name || endpointId;
+  panel.classList.remove('hidden');
+  document.body.classList.add('logs-open');
+
+  // Clean up previous
+  if (logsTerminal) { logsTerminal.dispose(); logsTerminal = null; }
+  if (logsWs) { logsWs.close(); logsWs = null; }
+
+  container.innerHTML = '';
+
+  // Create xterm for logs (read-only)
+  logsTerminal = new Terminal({
+    cursorBlink: false,
+    disableStdin: true,
+    fontSize: 13,
+    fontFamily: "'SF Mono', 'Fira Code', 'Cascadia Code', 'Menlo', monospace",
+    theme: {
+      background: '#0d0d14',
+      foreground: '#e4e4ef',
+      cursor: '#0d0d14'
+    },
+    scrollback: 5000
+  });
+
+  const fitAddon = new FitAddon.FitAddon();
+  logsTerminal.loadAddon(fitAddon);
+  logsTerminal.open(container);
+  fitAddon.fit();
+
+  window._logsResizeHandler = () => fitAddon.fit();
+  window.addEventListener('resize', window._logsResizeHandler);
+
+  logsTerminal.write('\x1b[36mConnecting to logs...\x1b[0m\r\n');
+
+  // Connect WebSocket
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  logsWs = new WebSocket(`${proto}://${location.host}/ws/logs?id=${encodeURIComponent(endpointId)}`);
+
+  logsWs.onmessage = (event) => {
+    try {
+      const msg = JSON.parse(event.data);
+      switch (msg.type) {
+        case 'data':
+          // Replace newlines with \r\n for xterm
+          logsTerminal.write(msg.data.replace(/\n/g, '\r\n'));
+          break;
+        case 'status':
+          logsTerminal.write(`\x1b[36m${msg.data}\x1b[0m`);
+          break;
+        case 'error':
+          logsTerminal.write(`\r\n\x1b[31m${msg.data}\x1b[0m\r\n`);
+          break;
+        case 'exit':
+          logsTerminal.write(`\r\n\x1b[33m[Stream ended — code ${msg.code}]\x1b[0m\r\n`);
+          break;
+      }
+    } catch (e) {
+      logsTerminal.write(event.data);
+    }
+  };
+
+  logsWs.onerror = () => {
+    logsTerminal.write('\r\n\x1b[31m[WebSocket error]\x1b[0m\r\n');
+  };
+
+  logsWs.onclose = () => {
+    logsTerminal.write('\r\n\x1b[33m[Connection closed]\x1b[0m\r\n');
+  };
+}
+
+function closeLogs() {
+  if (logsWs) { logsWs.close(); logsWs = null; }
+  if (logsTerminal) { logsTerminal.dispose(); logsTerminal = null; }
+  if (window._logsResizeHandler) {
+    window.removeEventListener('resize', window._logsResizeHandler);
+  }
+  document.getElementById('logs-panel').classList.add('hidden');
+  document.body.classList.remove('logs-open');
 }
 
 // ── Dashboard ────────────────────────────────────────────────────────────────
