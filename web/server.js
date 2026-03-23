@@ -237,7 +237,7 @@ function nebiusJson(cmd, profile) {
 
 // ── Deploy-time secrets (password stored per endpoint name) ────────────────
 const MAX_PASSWORDS = 200;
-const PASSWORDS_FILE = path.join(__dirname, 'endpoint-passwords.json');
+const PASSWORDS_FILE = path.join(__dirname, '..', 'endpoint-passwords.json');
 const endpointPasswords = {}; // { endpointName: password }
 
 // Load saved passwords from disk on startup
