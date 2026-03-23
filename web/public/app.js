@@ -820,6 +820,11 @@ function renderEndpoints() {
     const model = h?.model ? (h.model.split('/').pop()) : (ep.model ? ep.model.split('/').pop() : '');
 
     const actions = [];
+    if (ep.state === 'RUNNING' || ep.state === 'STARTING') {
+      actions.push(`<button class="btn-action-pill btn-stop" data-action="stop" data-id="${esc(ep.id)}" data-name="${esc(ep.name)}">Stop</button>`);
+    } else {
+      actions.push(`<button class="btn-action-pill btn-start" data-action="start" data-id="${esc(ep.id)}" data-name="${esc(ep.name)}">Start</button>`);
+    }
     actions.push(`<button class="btn-action-pill" data-action="logs" data-id="${esc(ep.id)}" data-name="${esc(ep.name)}">Logs</button>`);
     if (ep.publicIp && ep.state === 'RUNNING') {
       actions.push(`<button class="btn-action-pill" data-action="terminal" data-ip="${esc(ep.publicIp)}" data-name="${esc(ep.name)}">Terminal</button>`);
@@ -844,9 +849,6 @@ function renderEndpoints() {
         <div class="kebab-menu">
           <button class="btn-kebab" onclick="toggleKebab(this)">&#8942;</button>
           <div class="kebab-dropdown hidden">
-            ${ep.state === 'RUNNING' || ep.state === 'STARTING'
-              ? `<button class="kebab-item" data-action="stop" data-id="${esc(ep.id)}" data-name="${esc(ep.name)}">Stop endpoint</button>`
-              : `<button class="kebab-item" data-action="start" data-id="${esc(ep.id)}" data-name="${esc(ep.name)}">Start endpoint</button>`}
             <button class="kebab-item kebab-delete" data-action="delete" data-id="${esc(ep.id)}" data-name="${esc(ep.name)}">Delete endpoint</button>
           </div>
         </div>
