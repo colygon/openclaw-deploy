@@ -3,7 +3,12 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Deploy OpenClaw AI agents to Nebius Cloud">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🦞</text></svg>">
   <title>OpenClaw Deploy</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
 </head>
@@ -169,24 +174,44 @@
 
         <!-- Endpoints Page -->
         <div id="page-endpoints" class="page hidden">
-          <div class="page-header">
+          <div class="page-header-top">
             <h2>Endpoints</h2>
             <div class="page-header-actions">
-              <button class="btn btn-ghost btn-sm" onclick="loadEndpoints()">
+              <button class="btn-icon-only" onclick="loadEndpoints()" title="Refresh">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
-                Refresh
               </button>
               <button class="btn btn-primary btn-sm" onclick="switchPage('deploy')">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                New Deploy
+                Create endpoint
               </button>
             </div>
           </div>
 
-          <div class="page-body">
-            <div id="endpoints-list" class="endpoints-list">
-              <p class="empty-state">No endpoints found</p>
+          <div class="page-header-toolbar">
+            <div class="search-bar">
+              <span class="search-icon">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              </span>
+              <input type="text" id="endpoint-search" placeholder="Search endpoints..." />
             </div>
+            <div class="filter-tabs" id="endpoint-filters">
+              <button class="filter-tab active" data-filter="all">All</button>
+              <button class="filter-tab" data-filter="active">Active</button>
+              <button class="filter-tab" data-filter="inactive">Inactive</button>
+            </div>
+          </div>
+
+          <div class="endpoints-table-header">
+            <span>Name</span>
+            <span>Status</span>
+            <span>Platform</span>
+            <span>Resources</span>
+            <span>Created</span>
+            <span></span>
+          </div>
+
+          <div id="endpoints-list" class="endpoints-list">
+            <p class="empty-state">No endpoints found</p>
           </div>
         </div>
       </div>

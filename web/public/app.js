@@ -14,6 +14,11 @@ let terminalWs = null;
 let currentTerminalIp = null;
 let currentTerminalName = null;
 
+// Endpoints search/filter state
+let endpointsCache = [];
+let endpointFilter = 'all';
+let endpointSearch = '';
+
 // ── HTML escape helper (XSS prevention) ──────────────────────────────────────
 function esc(str) {
   if (str == null) return '';
@@ -21,6 +26,45 @@ function esc(str) {
   div.textContent = String(str);
   return div.innerHTML;
 }
+
+// ── Formatting helpers ──────────────────────────────────────────────────────
+function formatState(state) {
+  if (!state) return 'Unknown';
+  return state.charAt(0) + state.slice(1).toLowerCase();
+}
+
+function formatPlatform(platform) {
+  const names = { 'cpu-e2': 'Non-GPU Intel Ice Lake', 'cpu-d3': 'Non-GPU AMD EPYC' };
+  return names[platform] || platform || 'Standard';
+}
+
+function formatDate(iso) {
+  if (!iso) return '\u2014';
+  const d = new Date(iso), now = new Date(), diff = now - d;
+  const mins = Math.floor(diff / 60000), hrs = Math.floor(diff / 3600000), days = Math.floor(diff / 86400000);
+  if (mins < 1) return 'Just now';
+  if (mins < 60) return mins + 'm ago';
+  if (hrs < 24) return hrs + 'h ago';
+  if (days < 7) return days + 'd ago';
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+function copyToClipboard(text) {
+  navigator.clipboard.writeText(text);
+}
+
+function toggleKebab(btn) {
+  const dd = btn.nextElementSibling;
+  document.querySelectorAll('.kebab-dropdown').forEach(d => { if (d !== dd) d.classList.add('hidden'); });
+  dd.classList.toggle('hidden');
+}
+
+// Close kebab menus on outside click
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('.kebab-menu')) {
+    document.querySelectorAll('.kebab-dropdown').forEach(d => d.classList.add('hidden'));
+  }
+});
 
 // ── Init ─────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
@@ -32,6 +76,14 @@ document.addEventListener('DOMContentLoaded', () => {
 function setupDelegatedListeners() {
   // Endpoint action buttons (Terminal, Dashboard, Delete)
   document.getElementById('endpoints-list').addEventListener('click', (e) => {
+    // Handle copy button
+    const copyBtn = e.target.closest('[data-copy]');
+    if (copyBtn) {
+      e.stopPropagation();
+      copyToClipboard(copyBtn.dataset.copy);
+      return;
+    }
+
     const btn = e.target.closest('[data-action]');
     if (!btn) return;
 
@@ -47,6 +99,28 @@ function setupDelegatedListeners() {
       case 'delete': deleteEndpoint(id, name); break;
     }
   });
+
+  // Endpoint search input
+  const searchInput = document.getElementById('endpoint-search');
+  if (searchInput) {
+    searchInput.addEventListener('input', (e) => {
+      endpointSearch = e.target.value.toLowerCase();
+      renderEndpoints();
+    });
+  }
+
+  // Endpoint filter tabs
+  const filterContainer = document.getElementById('endpoint-filters');
+  if (filterContainer) {
+    filterContainer.addEventListener('click', (e) => {
+      const tab = e.target.closest('[data-filter]');
+      if (!tab) return;
+      endpointFilter = tab.dataset.filter;
+      filterContainer.querySelectorAll('.filter-tab').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      renderEndpoints();
+    });
+  }
 
   // Model picker items
   document.getElementById('model-picker-list').addEventListener('click', (e) => {
@@ -336,7 +410,7 @@ function selectTokenFactoryModel(modelId, el) {
   // Update badge
   const badge = el?.querySelector('.model-item-badge');
   if (badge) {
-    badge.textContent = '✓ selected';
+    badge.textContent = '\u2713 selected';
     badge.classList.add('active');
   }
 
@@ -614,12 +688,13 @@ async function deploy() {
 
 // ── Endpoints ────────────────────────────────────────────────────────────────
 async function loadEndpoints() {
-  const list = document.getElementById('endpoints-list');
-
   try {
     const res = await authFetch('/api/endpoints');
     if (!res.ok) throw new Error('Failed to load');
     const endpoints = await res.json();
+
+    // Store in cache
+    endpointsCache = endpoints;
 
     // Update sidebar badge + dock badge
     const badge = document.getElementById('endpoints-count');
@@ -633,47 +708,85 @@ async function loadEndpoints() {
       if (dockBadge) dockBadge.classList.add('hidden');
     }
 
-    if (endpoints.length === 0) {
-      list.innerHTML = '<p class="empty-state">No endpoints deployed yet</p>';
-      return;
-    }
-
-    list.innerHTML = endpoints.map(ep => {
-      const h = ep.health;
-      const healthInfo = h
-        ? `<div class="endpoint-health">
-            <span class="health-service">${esc(h.service || 'unknown')}</span>
-            <span class="health-model" title="${esc(h.model || '')}">${esc((h.model || '').split('/').pop())}</span>
-            <span class="health-inference">${esc(h.inference || '')}</span>
-          </div>`
-        : (ep.publicIp
-            ? '<span class="endpoint-ip">loading health...</span>'
-            : '<span class="endpoint-ip">pending...</span>');
-
-      const actions = [];
-      if (ep.publicIp && ep.state === 'RUNNING') {
-        actions.push(`<button class="btn btn-sm btn-console" data-action="terminal" data-ip="${esc(ep.publicIp)}" data-name="${esc(ep.name)}">Terminal</button>`);
-        actions.push(`<button class="btn btn-sm btn-dashboard" data-action="dashboard" data-ip="${esc(ep.publicIp)}" data-name="${esc(ep.name)}" ${ep.dashboardToken ? `data-token="${esc(ep.dashboardToken)}"` : ''}>Dashboard</button>`);
-      }
-      actions.push(`<button class="btn btn-sm btn-danger" data-action="delete" data-id="${esc(ep.id)}" data-name="${esc(ep.name)}">Delete</button>`);
-
-      return `
-        <div class="endpoint-row">
-          <div class="endpoint-info">
-            <span class="state-badge state-${esc(ep.state)}">${esc(ep.state)}</span>
-            <span class="endpoint-name">${esc(ep.name)}</span>
-            <span class="endpoint-region">${esc(ep.regionFlag)} ${esc(ep.regionName)}</span>
-            ${healthInfo}
-          </div>
-          <div class="endpoint-actions">
-            ${actions.join('')}
-          </div>
-        </div>
-      `;
-    }).join('');
+    renderEndpoints();
   } catch (err) {
+    const list = document.getElementById('endpoints-list');
     list.innerHTML = `<p class="empty-state">Could not load endpoints: ${esc(err.message)}</p>`;
   }
+}
+
+function renderEndpoints() {
+  const list = document.getElementById('endpoints-list');
+
+  // Filter by search + filter
+  let filtered = endpointsCache;
+
+  if (endpointFilter === 'active') {
+    filtered = filtered.filter(ep => ep.state === 'RUNNING' || ep.state === 'STARTING');
+  } else if (endpointFilter === 'inactive') {
+    filtered = filtered.filter(ep => ep.state !== 'RUNNING' && ep.state !== 'STARTING');
+  }
+
+  if (endpointSearch) {
+    filtered = filtered.filter(ep =>
+      (ep.name || '').toLowerCase().includes(endpointSearch) ||
+      (ep.id || '').toLowerCase().includes(endpointSearch) ||
+      (ep.state || '').toLowerCase().includes(endpointSearch)
+    );
+  }
+
+  if (filtered.length === 0) {
+    list.innerHTML = '<p class="empty-state">No endpoints found</p>';
+    return;
+  }
+
+  list.innerHTML = filtered.map(ep => {
+    const h = ep.health;
+    const healthInfo = h
+      ? `<div class="endpoint-health">
+          <span class="health-service">${esc(h.service || 'unknown')}</span>
+          <span class="health-model" title="${esc(h.model || '')}">${esc((h.model || '').split('/').pop())}</span>
+          <span class="health-inference">${esc(h.inference || '')}</span>
+        </div>`
+      : (ep.publicIp
+          ? '<span class="endpoint-ip">loading health...</span>'
+          : '<span class="endpoint-ip">pending...</span>');
+
+    const actions = [];
+    if (ep.publicIp && ep.state === 'RUNNING') {
+      actions.push(`<button class="btn-action-pill" data-action="terminal" data-ip="${esc(ep.publicIp)}" data-name="${esc(ep.name)}">Terminal</button>`);
+      actions.push(`<button class="btn-action-pill" data-action="dashboard" data-ip="${esc(ep.publicIp)}" data-name="${esc(ep.name)}" ${ep.dashboardToken ? `data-token="${esc(ep.dashboardToken)}"` : ''}>Dashboard</button>`);
+    }
+    const actionButtons = actions.join('');
+
+    return `<div class="endpoint-row" data-state="${esc(ep.state)}">
+      <div class="endpoint-col col-name">
+        <div class="endpoint-icon">${ep.image?.includes('nemoclaw') ? '\uD83D\uDD31' : '\uD83E\uDD9E'}</div>
+        <div class="endpoint-name-group">
+          <span class="endpoint-name">${esc(ep.name)}</span>
+          <span class="endpoint-id">${esc(ep.id)} <button class="btn-copy" data-copy="${esc(ep.id)}" title="Copy ID"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button></span>
+        </div>
+      </div>
+      <div class="endpoint-col col-status">
+        <span class="status-badge status-${esc(ep.state)}">${formatState(ep.state)}</span>
+      </div>
+      <div class="endpoint-col col-platform">
+        <div>${esc(formatPlatform(ep.platform))}</div>
+        <div class="platform-region">${esc(ep.regionFlag)} ${esc(ep.regionName)}</div>
+      </div>
+      <div class="endpoint-col col-resources">${healthInfo}</div>
+      <div class="endpoint-col col-created">${formatDate(ep.createdAt)}</div>
+      <div class="endpoint-col col-actions">
+        ${actionButtons}
+        <div class="kebab-menu">
+          <button class="btn-kebab" onclick="toggleKebab(this)">&#8942;</button>
+          <div class="kebab-dropdown hidden">
+            <button class="kebab-item kebab-delete" data-action="delete" data-id="${esc(ep.id)}" data-name="${esc(ep.name)}">Delete endpoint</button>
+          </div>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
 }
 
 async function deleteEndpoint(id, name) {
