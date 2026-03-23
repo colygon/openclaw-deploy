@@ -696,6 +696,8 @@ app.post('/api/deploy', requireAuth, async (req, res) => {
     try {
       const registries = nebiusJson('registry list', profile);
       registryId = registries.items?.[0]?.metadata?.id;
+      // Strip "registry-" prefix — image URLs use just the ID
+      if (registryId) registryId = registryId.replace(/^registry-/, '');
     } catch (e) {}
 
     if (!registryId) {
@@ -752,6 +754,16 @@ app.post('/api/deploy', requireAuth, async (req, res) => {
         break;
     }
 
+    // Find SSH public key to authorize on the endpoint
+    const sshKey = findSshKey();
+    let sshPubKey = '';
+    if (sshKey) {
+      const pubPath = sshKey + '.pub';
+      if (fs.existsSync(pubPath)) {
+        sshPubKey = fs.readFileSync(pubPath, 'utf-8').trim();
+      }
+    }
+
     // Deploy endpoint
     const cmd = [
       `${profileFlag} ai endpoint create`,
@@ -761,9 +773,11 @@ app.post('/api/deploy', requireAuth, async (req, res) => {
       regionConfig.cpuPreset ? `--preset ${regionConfig.cpuPreset}` : '',
       '--container-port 8080',
       '--container-port 18789',
+      '--disk-size 250Gi',
       ...envFlags,
-      '--public'
-    ].join(' ');
+      '--public',
+      sshPubKey ? `--ssh-key "${sshPubKey}"` : ''
+    ].filter(Boolean).join(' ');
 
     // Store the dashboard password keyed by endpoint name
     storePassword(name, webPassword);
