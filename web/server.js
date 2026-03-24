@@ -726,6 +726,30 @@ app.post('/api/deploy', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'Could not resolve image URL' });
     }
 
+    // Check if the image exists in the registry (skip for custom images)
+    if (imageType !== 'custom') {
+      try {
+        const token = execSync('nebius iam get-access-token', { encoding: 'utf-8' }).trim();
+        const registryUrl = `cr.${region}.nebius.cloud`;
+        const repoPath = `${registryId}/${imageType === 'nemoclaw' ? 'nemoclaw' : 'openclaw'}-serverless`;
+        // Check via Docker registry API v2
+        const checkResult = execSync(
+          `curl -sf -o /dev/null -w "%{http_code}" -H "Authorization: Bearer ${token}" "https://${registryUrl}/v2/${repoPath}/tags/list"`,
+          { encoding: 'utf-8', timeout: 10000 }
+        ).trim();
+        if (checkResult === '404' || checkResult === '401') {
+          const scriptName = imageType === 'nemoclaw' ? 'install-nemoclaw-serverless.sh' : 'install-openclaw-serverless.sh';
+          return res.status(400).json({
+            error: `Image "${imageType}-serverless:latest" not found in your registry (${registryUrl}/${repoPath}). ` +
+              `Build and push it first by running: ./${scriptName}`
+          });
+        }
+      } catch (e) {
+        // Non-fatal — continue with deploy, it'll fail at endpoint creation if image is missing
+        console.warn(`[Deploy] Image check skipped: ${e.message.split('\n')[0]}`);
+      }
+    }
+
     // Build env vars based on provider
     const envFlags = [];
     envFlags.push(`--env "INFERENCE_MODEL=${model || 'deepseek-ai/DeepSeek-R1-0528'}"`);
