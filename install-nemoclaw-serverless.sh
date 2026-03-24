@@ -53,11 +53,22 @@ set -euo pipefail
 REGION="${REGION:-eu-north1}"
 PROJECT_ID="${PROJECT_ID:-}"
 ENDPOINT_NAME="${ENDPOINT_NAME:-nemoclaw-serverless}"
-PLATFORM="cpu-e2"                    # Intel Ice Lake (cheapest CPU option)
+PRESET="${PRESET:-2vcpu-8gb}"         # CPU preset: 2 vCPUs, 8 GiB RAM (cheapest)
 CONTAINER_PORT=8080                   # Health check port (required by Nebius)
 GATEWAY_PORT=18789                    # OpenClaw Gateway WebSocket port
 INFERENCE_MODEL="${INFERENCE_MODEL:-zai-org/GLM-5}"  # Token Factory model ID
 TOKEN_FACTORY_URL="${TOKEN_FACTORY_URL:-https://api.tokenfactory.nebius.com/v1}"
+
+# ── Region → CPU platform mapping ───────────────────────────────────────────
+# Different Nebius regions support different CPU platforms:
+#   eu-north1   (Finland) → cpu-e2 (Intel Ice Lake)
+#   eu-west1    (Paris)   → cpu-d3 (AMD EPYC)
+#   us-central1 (US)      → cpu-e2 (Intel Ice Lake)
+# Using the wrong platform for a region will cause deployment to fail.
+case "$REGION" in
+  eu-west1)    PLATFORM="cpu-d3" ;;   # AMD EPYC (Paris only)
+  *)           PLATFORM="cpu-e2" ;;   # Intel Ice Lake (Finland, US)
+esac
 
 # ── Colors & logging helpers ─────────────────────────────────────────────────
 info()  { printf '\033[1;34m>>>\033[0m %s\n' "$*"; }
@@ -357,10 +368,38 @@ info "Step 4: Deploying NemoClaw on $PLATFORM (no GPU)..."
 # Generate a gateway token for this deployment
 DEPLOY_TOKEN="${GATEWAY_TOKEN:-$(openssl rand -hex 16)}"
 
+# Find SSH public key for Terminal access.
+# The deploy UI copies its SSH key to endpoints for in-browser Terminal access.
+# If no key exists, we generate one and display a warning.
+SSH_KEY_PATH=""
+for key_path in ~/.ssh/id_ed25519.pub ~/.ssh/id_rsa.pub; do
+  if [ -f "$key_path" ]; then
+    SSH_KEY_PATH="$key_path"
+    break
+  fi
+done
+
+if [ -z "$SSH_KEY_PATH" ]; then
+  warn "No SSH public key found — generating one for endpoint access"
+  ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519 -N "" -C "nemoclaw-deploy" 2>/dev/null
+  SSH_KEY_PATH=~/.ssh/id_ed25519.pub
+fi
+
+SSH_KEY_CONTENT=$(cat "$SSH_KEY_PATH")
+ok "Using SSH key: $SSH_KEY_PATH"
+
+# Create the endpoint with all required flags:
+#   --platform   : CPU type (region-dependent, set above)
+#   --preset     : Resource allocation (vCPUs + RAM)
+#   --container-port : Ports to expose (8080 for health, 18789 for gateway)
+#   --disk-size  : Storage for the container (250Gi gives room for model caches)
+#   --public     : Assign a public IP for direct access
+#   --ssh-key    : Authorize SSH key for Terminal access
 nebius ai endpoint create \
   --name "$ENDPOINT_NAME" \
   --image "$IMAGE" \
   --platform "$PLATFORM" \
+  --preset "$PRESET" \
   --container-port "$CONTAINER_PORT" \
   --container-port "$GATEWAY_PORT" \
   --disk-size 250Gi \
@@ -369,6 +408,7 @@ nebius ai endpoint create \
   --env "INFERENCE_MODEL=${INFERENCE_MODEL}" \
   --env "OPENCLAW_WEB_PASSWORD=${DEPLOY_TOKEN}" \
   --public \
+  --ssh-key "$SSH_KEY_CONTENT" \
   2>&1
 
 # ── Step 5: Wait for endpoint to be ready ────────────────────────────────────
