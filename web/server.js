@@ -428,6 +428,165 @@ app.get('/api/images', (req, res) => {
   ));
 });
 
+// ── Routes: Docker Registry ──────────────────────────────────────────────
+
+app.get('/api/registries', requireAuth, async (req, res) => {
+  if (IS_VERCEL) {
+    return res.json([{
+      id: 'registry-demo', name: 'openclaw', region: 'eu-north1',
+      regionName: 'EU North (Finland)', regionFlag: '🇫🇮',
+      registryUrl: 'cr.eu-north1.nebius.cloud', imagesCount: 2,
+      createdAt: new Date().toISOString()
+    }]);
+  }
+
+  const results = [];
+  const regionEntries = Object.entries(REGIONS);
+
+  await Promise.all(regionEntries.map(async ([regionKey, regionConfig]) => {
+    try {
+      const data = nebiusJson('registry list', regionConfig.profile);
+      for (const reg of (data.items || [])) {
+        results.push({
+          id: reg.metadata.id,
+          name: reg.metadata.name || 'unnamed',
+          region: regionKey,
+          regionName: regionConfig.name,
+          regionFlag: regionConfig.flag,
+          registryUrl: `cr.${regionKey}.nebius.cloud`,
+          imagesCount: reg.spec?.images_count || 0,
+          createdAt: reg.metadata.created_at || ''
+        });
+      }
+    } catch (e) {
+      // Skip regions that fail
+    }
+  }));
+
+  res.json(results);
+});
+
+app.get('/api/registries/:id/images', requireAuth, (req, res) => {
+  if (IS_VERCEL) {
+    return res.json([
+      { name: 'openclaw-serverless', tags: ['latest'], size: '450 MB', createdAt: new Date().toISOString() },
+      { name: 'nemoclaw-serverless', tags: ['latest'], size: '620 MB', createdAt: new Date().toISOString() }
+    ]);
+  }
+
+  try {
+    const id = validateId(req.params.id);
+    const profile = req.query.profile || undefined;
+    const data = nebiusJson(`registry image list --parent-id ${id}`, profile);
+    const images = (data.items || []).map(img => {
+      const fullName = img.name || img.metadata?.name || '';
+      // Image name format: "registryId/imageName" — extract just the image name
+      const shortName = fullName.includes('/') ? fullName.split('/').slice(1).join('/') : fullName;
+      return {
+        id: img.metadata?.id || img.id || '',
+        name: shortName || 'unknown',
+        tags: img.tags || [],
+        size: img.size ? `${(img.size / (1024 * 1024)).toFixed(0)} MB` : 'unknown',
+        createdAt: img.metadata?.created_at || img.created_at || ''
+      };
+    });
+    res.json(images);
+  } catch (err) {
+    res.status(500).json({ error: `Failed to list images: ${err.message.split('\n')[0]}` });
+  }
+});
+
+// Docker image build tracking
+const builds = new Map();
+
+app.post('/api/build', requireAuth, (req, res) => {
+  if (IS_VERCEL) return res.json({ buildId: 'demo-build', status: 'running' });
+
+  const { imageType, region } = req.body;
+  if (!imageType || !region) {
+    return res.status(400).json({ error: 'imageType and region are required' });
+  }
+
+  const regionConfig = REGIONS[region];
+  if (!regionConfig) {
+    return res.status(400).json({ error: `Unknown region: ${region}` });
+  }
+
+  // Find registry
+  let registryId;
+  try {
+    const registries = nebiusJson('registry list', regionConfig.profile);
+    registryId = registries.items?.[0]?.metadata?.id;
+    if (registryId) registryId = registryId.replace(/^registry-/, '');
+  } catch (e) {}
+
+  if (!registryId) {
+    return res.status(400).json({ error: `No container registry found in ${region}. Create one first.` });
+  }
+
+  const buildId = `build-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+  const imageName = imageType === 'nemoclaw' ? 'nemoclaw-serverless' : 'openclaw-serverless';
+  const imageUrl = `cr.${region}.nebius.cloud/${registryId}/${imageName}:latest`;
+
+  builds.set(buildId, { status: 'running', log: '', image: imageUrl, startedAt: Date.now() });
+
+  // Run build script asynchronously
+  const scriptPath = imageType === 'nemoclaw'
+    ? path.resolve(__dirname, '../install-nemoclaw-serverless.sh')
+    : path.resolve(__dirname, '../install-openclaw-serverless.sh');
+
+  // Check if script exists, if not use inline Dockerfile
+  const buildCmd = fs.existsSync(scriptPath)
+    ? `bash "${scriptPath}" 2>&1`
+    : `echo "Build script not found: ${scriptPath}"`;
+
+  const env = {
+    ...process.env,
+    REGION: region,
+    PROJECT_ID: regionConfig.projectId || '',
+    TOKEN_FACTORY_API_KEY: 'placeholder', // Just for the build, not used at build time
+    SKIP_DEPLOY: '1' // We only want build+push, not endpoint creation
+  };
+
+  const buildProc = exec(buildCmd, { env, timeout: 600000 }, (err, stdout, stderr) => {
+    const build = builds.get(buildId);
+    if (build) {
+      build.status = err ? 'failed' : 'success';
+      build.log += stderr || '';
+      build.finishedAt = Date.now();
+    }
+  });
+
+  buildProc.stdout?.on('data', (data) => {
+    const build = builds.get(buildId);
+    if (build) build.log += data.toString();
+  });
+
+  buildProc.stderr?.on('data', (data) => {
+    const build = builds.get(buildId);
+    if (build) build.log += data.toString();
+  });
+
+  res.json({ buildId, status: 'running', image: imageUrl });
+});
+
+app.get('/api/build/:id', requireAuth, (req, res) => {
+  const build = builds.get(req.params.id);
+  if (!build) return res.status(404).json({ error: 'Build not found' });
+
+  // Return last 100 lines of log
+  const logLines = build.log.split('\n');
+  const tailLog = logLines.slice(-100).join('\n');
+
+  res.json({
+    status: build.status,
+    image: build.image,
+    log: tailLog,
+    startedAt: build.startedAt,
+    finishedAt: build.finishedAt
+  });
+});
+
 // ── Routes: Models (Token Factory) ────────────────────────────────────────
 let cachedModels = null;
 let modelsCacheTime = 0;

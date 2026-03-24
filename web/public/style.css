@@ -1232,6 +1232,190 @@ input::placeholder { color: #555566; }
   gap: 0.4rem;
 }
 
+/* ── Docker Registry Page ──────────────────────────────────────────── */
+.registries-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 0 1.5rem 1.5rem;
+}
+
+.registry-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-card);
+  overflow: hidden;
+  transition: border-color 0.15s;
+}
+
+.registry-card:hover, .registry-card.expanded {
+  border-color: rgba(139, 92, 246, 0.3);
+}
+
+.registry-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 1.25rem;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.registry-header:hover {
+  background: var(--bg-card-hover);
+}
+
+.registry-info {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.registry-flag { font-size: 1.5rem; }
+
+.registry-name {
+  font-weight: 600;
+  color: var(--text-bright);
+  font-size: 0.95rem;
+}
+
+.registry-url {
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  font-family: monospace;
+}
+
+.registry-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.registry-region {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+}
+
+.registry-chevron {
+  transition: transform 0.2s;
+  color: var(--text-dim);
+}
+
+.registry-card.expanded .registry-chevron {
+  transform: rotate(180deg);
+}
+
+.registry-images {
+  border-top: 1px solid var(--border);
+  padding: 0.75rem;
+}
+
+.registry-empty {
+  padding: 1rem;
+  text-align: center;
+  color: var(--text-dim);
+  font-size: 0.85rem;
+}
+
+.images-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+}
+
+.images-table th {
+  text-align: left;
+  padding: 0.4rem 0.6rem;
+  color: var(--text-dim);
+  font-weight: 500;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-bottom: 1px solid var(--border);
+}
+
+.images-table td {
+  padding: 0.5rem 0.6rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+}
+
+.image-name {
+  font-family: monospace;
+  font-weight: 500;
+  color: var(--text-bright);
+}
+
+.image-tag {
+  display: inline-block;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  background: rgba(34, 197, 94, 0.12);
+  color: var(--green);
+  font-size: 0.72rem;
+  font-weight: 500;
+  margin-right: 0.25rem;
+}
+
+.build-dialog {
+  margin: 1rem 1.5rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-card);
+  padding: 1.25rem;
+}
+
+.build-dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1rem;
+}
+
+.build-dialog-header h3 { margin: 0; font-size: 1rem; }
+
+.build-type-cards {
+  display: flex;
+  gap: 0.75rem;
+}
+
+.build-type-cards .select-card {
+  flex: 1;
+  padding: 0.75rem;
+  min-height: auto;
+}
+
+.form-select {
+  width: 100%;
+  padding: 0.6rem 0.75rem;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 0.85rem;
+  outline: none;
+}
+
+.form-select:focus { border-color: var(--accent); }
+
+.build-log {
+  margin-top: 1rem;
+  background: #0a0a0f;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.75rem;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.build-log pre {
+  margin: 0;
+  font-family: 'Menlo', 'Consolas', monospace;
+  font-size: 0.75rem;
+  color: var(--green);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 /* ── Model Picker (Token Factory) ─────────────────────────────────── */
 .model-picker {
   margin-top: 0.8rem;

@@ -266,10 +266,9 @@ function switchPage(page) {
   const target = document.getElementById(`page-${page}`);
   if (target) target.classList.remove('hidden');
 
-  // Refresh endpoints when switching to that page
-  if (page === 'endpoints') {
-    loadEndpoints();
-  }
+  // Refresh data when switching pages
+  if (page === 'endpoints') loadEndpoints();
+  if (page === 'registry') loadRegistries();
 }
 
 // ── Load Images ──────────────────────────────────────────────────────────────
@@ -947,6 +946,192 @@ async function startEndpoint(id, name) {
     loadEndpoints();
   } catch (err) {
     alert('Start failed: ' + err.message);
+  }
+}
+
+// ── Docker Registry ──────────────────────────────────────────────────────────
+let registriesCache = [];
+let selectedBuildType = 'openclaw';
+
+async function loadRegistries() {
+  const list = document.getElementById('registries-list');
+  list.innerHTML = '<div class="mb-loading"><span class="spinner"></span> Loading registries...</div>';
+
+  try {
+    const res = await authFetch('/api/registries');
+    if (!res.ok) throw new Error('Failed to load');
+    registriesCache = await res.json();
+    renderRegistries();
+  } catch (err) {
+    list.innerHTML = `<p class="empty-state">Could not load registries: ${esc(err.message)}</p>`;
+  }
+}
+
+function renderRegistries() {
+  const list = document.getElementById('registries-list');
+
+  if (registriesCache.length === 0) {
+    list.innerHTML = '<p class="empty-state">No registries found. Deploy an endpoint to auto-create one.</p>';
+    return;
+  }
+
+  list.innerHTML = registriesCache.map(reg => `
+    <div class="registry-card" data-registry-id="${esc(reg.id)}">
+      <div class="registry-header" onclick="toggleRegistryImages('${esc(reg.id)}', '${esc(reg.region)}')">
+        <div class="registry-info">
+          <span class="registry-flag">${reg.regionFlag || ''}</span>
+          <div>
+            <div class="registry-name">${esc(reg.name)}</div>
+            <div class="registry-url">${esc(reg.registryUrl)}</div>
+          </div>
+        </div>
+        <div class="registry-meta">
+          <span class="registry-region">${esc(reg.regionName)}</span>
+          <svg class="registry-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        </div>
+      </div>
+      <div class="registry-images hidden" id="registry-images-${esc(reg.id)}">
+        <div class="mb-loading"><span class="spinner"></span> Loading images...</div>
+      </div>
+    </div>
+  `).join('');
+}
+
+async function toggleRegistryImages(registryId, region) {
+  const container = document.getElementById(`registry-images-${registryId}`);
+  const card = container.closest('.registry-card');
+  const chevron = card.querySelector('.registry-chevron');
+
+  if (!container.classList.contains('hidden')) {
+    container.classList.add('hidden');
+    card.classList.remove('expanded');
+    return;
+  }
+
+  container.classList.remove('hidden');
+  card.classList.add('expanded');
+  container.innerHTML = '<div class="mb-loading"><span class="spinner"></span> Loading images...</div>';
+
+  // Find the profile for this region
+  const reg = registriesCache.find(r => r.id === registryId);
+  const profile = reg ? `profile=${encodeURIComponent(region)}` : '';
+
+  try {
+    const res = await authFetch(`/api/registries/${encodeURIComponent(registryId)}/images?${profile}`);
+    const images = await res.json();
+
+    if (images.length === 0) {
+      container.innerHTML = '<div class="registry-empty">No images in this registry</div>';
+      return;
+    }
+
+    container.innerHTML = `
+      <table class="images-table">
+        <thead>
+          <tr><th>Image</th><th>Tags</th><th>Size</th><th>Created</th></tr>
+        </thead>
+        <tbody>
+          ${images.map(img => `
+            <tr>
+              <td class="image-name">${esc(img.name)}</td>
+              <td>${(img.tags || []).map(t => `<span class="image-tag">${esc(t)}</span>`).join(' ') || '<span class="text-dim">untagged</span>'}</td>
+              <td class="text-dim">${esc(img.size || 'unknown')}</td>
+              <td class="text-dim">${formatDate(img.createdAt)}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    `;
+  } catch (err) {
+    container.innerHTML = `<div class="registry-empty">Failed to load images: ${esc(err.message)}</div>`;
+  }
+}
+
+function showBuildDialog() {
+  const dialog = document.getElementById('build-dialog');
+  dialog.classList.remove('hidden');
+
+  // Populate region selector
+  const select = document.getElementById('build-region');
+  if (select.options.length <= 1) {
+    select.innerHTML = '';
+    for (const reg of registriesCache) {
+      const opt = document.createElement('option');
+      opt.value = reg.region;
+      opt.textContent = `${reg.regionFlag} ${reg.regionName} (${reg.name})`;
+      select.appendChild(opt);
+    }
+    // If no registries, add regions from state
+    if (select.options.length === 0) {
+      select.innerHTML = '<option value="eu-north1">EU North (Finland)</option>';
+    }
+  }
+}
+
+function hideBuildDialog() {
+  document.getElementById('build-dialog').classList.add('hidden');
+  document.getElementById('build-log').classList.add('hidden');
+}
+
+function selectBuildType(el) {
+  el.closest('.build-type-cards').querySelectorAll('.select-card').forEach(c => c.classList.remove('selected'));
+  el.classList.add('selected');
+  selectedBuildType = el.dataset.buildType;
+}
+
+async function startBuild() {
+  const region = document.getElementById('build-region').value;
+  const btn = document.getElementById('build-btn');
+  const logEl = document.getElementById('build-log');
+  const logContent = document.getElementById('build-log-content');
+
+  btn.disabled = true;
+  btn.textContent = 'Building...';
+  logEl.classList.remove('hidden');
+  logContent.textContent = 'Starting build...\n';
+
+  try {
+    const res = await authFetch('/api/build', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ imageType: selectedBuildType, region })
+    });
+
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Build failed to start');
+
+    const buildId = data.buildId;
+    logContent.textContent += `Build ID: ${buildId}\nImage: ${data.image}\n\n`;
+
+    // Poll for build status
+    const pollInterval = setInterval(async () => {
+      try {
+        const statusRes = await authFetch(`/api/build/${encodeURIComponent(buildId)}`);
+        const status = await statusRes.json();
+
+        logContent.textContent = status.log || 'Building...';
+        logEl.scrollTop = logEl.scrollHeight;
+
+        if (status.status !== 'running') {
+          clearInterval(pollInterval);
+          btn.disabled = false;
+          btn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12H2"/><path d="M5.45 5.11L2 12v6a2 2 0 002 2h16a2 2 0 002-2v-6l-3.45-6.89A2 2 0 0016.76 4H7.24a2 2 0 00-1.79 1.11z"/></svg> Build &amp; Push';
+
+          if (status.status === 'success') {
+            logContent.textContent += '\n\n=== BUILD SUCCESSFUL ===\n';
+            loadRegistries(); // Refresh registry list
+          } else {
+            logContent.textContent += '\n\n=== BUILD FAILED ===\n';
+          }
+        }
+      } catch (e) {
+        // Keep polling
+      }
+    }, 3000);
+  } catch (err) {
+    logContent.textContent += `\nError: ${err.message}\n`;
+    btn.disabled = false;
+    btn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12H2"/><path d="M5.45 5.11L2 12v6a2 2 0 002 2h16a2 2 0 002-2v-6l-3.45-6.89A2 2 0 0016.76 4H7.24a2 2 0 00-1.79 1.11z"/></svg> Build &amp; Push';
   }
 }
 
