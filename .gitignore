@@ -7,3 +7,4 @@ node_modules/
 *.key
 .nebius/
 .vercel
+endpoint-passwords.json
