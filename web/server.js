@@ -168,20 +168,30 @@ const DEMO_ENDPOINTS = [
 ];
 
 // ── Image config ──────────────────────────────────────────────────────────
+// Public GHCR images (fallback if user's registry doesn't have the image)
+const GHCR_IMAGES = {
+  openclaw: 'ghcr.io/colygon/openclaw-serverless:latest',
+  nemoclaw: 'ghcr.io/colygon/nemoclaw-serverless:latest'
+};
+
 const IMAGES = {
   'openclaw': {
     name: 'OpenClaw',
     description: 'Lightweight AI agent — OpenClaw only',
     icon: '🦞',
     getImage: (registryId, region) =>
-      `cr.${region}.nebius.cloud/${registryId}/openclaw-serverless:latest`
+      registryId
+        ? `cr.${region}.nebius.cloud/${registryId}/openclaw-serverless:latest`
+        : GHCR_IMAGES.openclaw
   },
   'nemoclaw': {
     name: 'NemoClaw',
     description: 'Full agent — OpenClaw + NVIDIA NemoClaw plugin',
     icon: '🔱',
     getImage: (registryId, region) =>
-      `cr.${region}.nebius.cloud/${registryId}/nemoclaw-serverless:latest`
+      registryId
+        ? `cr.${region}.nebius.cloud/${registryId}/nemoclaw-serverless:latest`
+        : GHCR_IMAGES.nemoclaw
   },
   'custom': {
     name: 'Custom Image',
@@ -880,38 +890,37 @@ app.post('/api/deploy', requireAuth, async (req, res) => {
       return res.status(400).json({ error: `Unknown image type: ${imageType}` });
     }
 
-    const image = imageConfig.getImage(registryId, region, customImage);
+    let image = imageConfig.getImage(registryId, region, customImage);
     if (!image) {
       return res.status(400).json({ error: 'Could not resolve image URL' });
     }
 
-    // Check if the image exists in the registry (skip for custom images)
-    if (imageType !== 'custom') {
+    // Check if the image exists in the registry; fall back to public GHCR if not
+    if (imageType !== 'custom' && registryId) {
       try {
         const token = execSync('nebius iam get-access-token', { encoding: 'utf-8' }).trim();
         const registryUrl = `cr.${region}.nebius.cloud`;
         const repoPath = `${registryId}/${imageType === 'nemoclaw' ? 'nemoclaw' : 'openclaw'}-serverless`;
-        // Check via Docker registry API v2
         const checkResult = execSync(
           `curl -sf -o /dev/null -w "%{http_code}" -H "Authorization: Bearer ${token}" "https://${registryUrl}/v2/${repoPath}/tags/list"`,
           { encoding: 'utf-8', timeout: 10000 }
         ).trim();
         if (checkResult === '404' || checkResult === '401') {
-          const scriptName = imageType === 'nemoclaw' ? 'install-nemoclaw-serverless.sh' : 'install-openclaw-serverless.sh';
-          return res.status(400).json({
-            error: `Image "${imageType}-serverless:latest" not found in your registry (${registryUrl}/${repoPath}). ` +
-              `Build and push it first by running: ./${scriptName}`
-          });
+          // Image not in user's registry — fall back to public GHCR image
+          const ghcrImage = GHCR_IMAGES[imageType];
+          if (ghcrImage) {
+            console.log(`[Deploy] Image not in registry, using public GHCR: ${ghcrImage}`);
+            image = ghcrImage;
+          }
         }
       } catch (e) {
-        // Non-fatal — continue with deploy, it'll fail at endpoint creation if image is missing
         console.warn(`[Deploy] Image check skipped: ${e.message.split('\n')[0]}`);
       }
     }
 
     // Build env vars based on provider
     const envFlags = [];
-    envFlags.push(`--env "INFERENCE_MODEL=${model || 'deepseek-ai/DeepSeek-R1-0528'}"`);
+    envFlags.push(`--env "INFERENCE_MODEL=${model || 'zai-org/GLM-5'}"`);
 
     // Generate a dashboard password and store it for later use
     const webPassword = crypto.randomBytes(24).toString('base64url');

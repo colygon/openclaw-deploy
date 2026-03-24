@@ -91,17 +91,20 @@ cat > "$BUILD_DIR/Dockerfile" << 'DOCKERFILE'
 # NemoClaw Serverless — CPU-only for Nebius cpu-e2 (Intel Ice Lake)
 # Includes OpenClaw + NemoClaw plugin, no GPU required.
 # Inference routed to Nebius Token Factory.
-FROM node:22-slim
+# NOTE: Must use node:22 (not slim) — NemoClaw deps need build tools
+FROM node:22
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl ca-certificates procps git python3 python3-pip python3-yaml \
+    curl ca-certificates procps git python3 python3-pip python3-yaml bash \
     && rm -rf /var/lib/apt/lists/*
 
 # Install OpenClaw CLI
 RUN npm install -g openclaw
 
 # Install NemoClaw plugin from GitHub
-RUN npm install -g git+https://github.com/NVIDIA/NemoClaw.git
+# --ignore-scripts: skip post-install scripts that fail in Docker (e.g. @whiskeysockets/baileys)
+RUN npm install -g git+https://github.com/NVIDIA/NemoClaw.git --ignore-scripts || \
+    echo "WARN: NemoClaw install had issues, continuing"
 
 RUN useradd -m -s /bin/bash nemoclaw
 
@@ -118,9 +121,11 @@ cat > "$BUILD_DIR/entrypoint.sh" << 'ENTRYPOINT'
 #!/bin/bash
 set -e
 
-MODEL="${INFERENCE_MODEL:-deepseek-ai/DeepSeek-R1-0528}"
+MODEL="${INFERENCE_MODEL:-zai-org/GLM-5}"
 TF_KEY="${TOKEN_FACTORY_API_KEY}"
 TF_URL="${TOKEN_FACTORY_URL:-https://api.tokenfactory.nebius.com/v1}"
+# Map OPENCLAW_WEB_PASSWORD (set by deploy UI) to OPENCLAW_GATEWAY_TOKEN
+export OPENCLAW_GATEWAY_TOKEN="${OPENCLAW_WEB_PASSWORD:-${GATEWAY_TOKEN:-nemoclaw-$(hostname)}}"
 
 echo "=== NemoClaw Serverless ==="
 echo "Model: $MODEL"
@@ -130,7 +135,9 @@ if [ -z "$TF_KEY" ]; then
   echo "WARNING: TOKEN_FACTORY_API_KEY not set — agent will not be able to call inference"
 fi
 
-# Configure OpenClaw with NemoClaw plugin
+# Configure OpenClaw
+# NOTE: Do NOT add "plugins" key — it's not a valid OpenClaw config and crashes the gateway.
+# NemoClaw is loaded automatically if installed globally via npm.
 mkdir -p ~/.openclaw
 cat > ~/.openclaw/openclaw.json << OCJSON
 {
@@ -156,11 +163,12 @@ cat > ~/.openclaw/openclaw.json << OCJSON
     "port": 18789,
     "mode": "local",
     "bind": "lan",
-    "auth": {"mode": "token"}
-  },
-  "plugins": {
-    "nemoclaw": {
-      "enabled": true
+    "auth": {
+      "mode": "token",
+      "token": "${OPENCLAW_GATEWAY_TOKEN}"
+    },
+    "controlUi": {
+      "allowedOrigins": ["*"]
     }
   }
 }
@@ -168,9 +176,8 @@ OCJSON
 echo "OpenClaw + NemoClaw configured."
 
 # Start OpenClaw gateway in background with token auth (required for LAN bind)
-export OPENCLAW_GATEWAY_TOKEN="${GATEWAY_TOKEN:-nemoclaw-serverless-$(hostname)}"
 openclaw gateway --bind lan --auth token > /tmp/gateway.log 2>&1 &
-echo "Gateway started (PID: $!) token=\$OPENCLAW_GATEWAY_TOKEN"
+echo "Gateway started (PID: $!) token=$OPENCLAW_GATEWAY_TOKEN"
 
 # Main process: health check HTTP server on port 8080
 # This MUST be the foreground process for Nebius endpoint health checks

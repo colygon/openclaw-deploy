@@ -176,9 +176,12 @@ set -e
 
 # Read configuration from environment variables passed at deploy time.
 # These are set via --env flags in the `nebius ai endpoint create` command.
-MODEL="${INFERENCE_MODEL:-deepseek-ai/DeepSeek-R1-0528}"
+MODEL="${INFERENCE_MODEL:-zai-org/GLM-5}"
 TF_KEY="${TOKEN_FACTORY_API_KEY}"
 TF_URL="${TOKEN_FACTORY_URL:-https://api.tokenfactory.nebius.com/v1}"
+# Map OPENCLAW_WEB_PASSWORD (set by deploy UI) to OPENCLAW_GATEWAY_TOKEN.
+# Falls back to GATEWAY_TOKEN or auto-generated value.
+export OPENCLAW_GATEWAY_TOKEN="${OPENCLAW_WEB_PASSWORD:-${GATEWAY_TOKEN:-openclaw-$(hostname)}}"
 
 echo "=== OpenClaw Serverless ==="
 echo "Model: $MODEL"
@@ -192,6 +195,11 @@ fi
 # OpenClaw reads its config from ~/.openclaw/openclaw.json.
 # We generate this file dynamically from environment variables so the
 # same Docker image can be reused with different models/keys.
+#
+# IMPORTANT lessons learned:
+#   - Token must be in config file AND env var (env alone isn't reliable after restarts)
+#   - allowedOrigins: ["*"] needed for dashboard access from deploy UI proxy
+#   - Do NOT add "plugins" key — invalid keys crash the gateway on startup
 mkdir -p ~/.openclaw
 cat > ~/.openclaw/openclaw.json << OCJSON
 {
@@ -217,7 +225,13 @@ cat > ~/.openclaw/openclaw.json << OCJSON
     "port": 18789,
     "mode": "local",
     "bind": "lan",
-    "auth": {"mode": "token"}
+    "auth": {
+      "mode": "token",
+      "token": "${OPENCLAW_GATEWAY_TOKEN}"
+    },
+    "controlUi": {
+      "allowedOrigins": ["*"]
+    }
   }
 }
 OCJSON
@@ -233,9 +247,8 @@ echo "OpenClaw configured."
 # making it accessible from outside the container.
 # --auth token requires clients to provide OPENCLAW_GATEWAY_TOKEN to connect.
 # This prevents unauthorized access to the gateway.
-export OPENCLAW_GATEWAY_TOKEN="${GATEWAY_TOKEN:-openclaw-serverless-$(hostname)}"
 openclaw gateway --bind lan --auth token > /tmp/gateway.log 2>&1 &
-echo "Gateway started (PID: $!) token=\$OPENCLAW_GATEWAY_TOKEN"
+echo "Gateway started (PID: $!) token=$OPENCLAW_GATEWAY_TOKEN"
 
 # ── Health Check Server ──
 # Nebius AI endpoints require a health check on the container port (8080).
