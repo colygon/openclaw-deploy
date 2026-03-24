@@ -106,6 +106,12 @@ else
   ok "Using existing registry: $REGISTRY_ID"
 fi
 
+# Strip the "registry-" prefix from the ID if present.
+# The `nebius registry list` command returns IDs like "registry-u00wtpem36bva2zhc8",
+# but the Docker image URL only uses the part after "registry-".
+# Example: cr.eu-north1.nebius.cloud/u00wtpem36bva2zhc8/image:tag (NOT registry-u00...)
+REGISTRY_ID="${REGISTRY_ID#registry-}"
+
 # Build the full image URL for the Nebius container registry.
 # Format: cr.<region>.nebius.cloud/<registry-id>/<image-name>:<tag>
 REGISTRY_URL="cr.${REGION}.nebius.cloud"
