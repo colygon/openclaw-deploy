@@ -1,131 +1,68 @@
 # 🦞 OpenClaw Deploy
 
-Deploy [OpenClaw](https://github.com/nichochar/openclaw) AI agents to [Nebius Cloud](https://nebius.com) — via a web UI or CLI scripts.
+Deploy [OpenClaw](https://github.com/nichochar/openclaw) AI agents to [Nebius Cloud](https://nebius.com).
 
-This repo provides everything you need to run OpenClaw on Nebius infrastructure: a browser-based deployment tool, shell scripts for automated setup, container images, and a comprehensive setup guide covering multi-region deployments, Token Factory / OpenRouter / HuggingFace integration, SSH access, and troubleshooting.
+## Choose Your Path
 
-## Deploy Options
+| Path | Method | Inference | Best For |
+|------|--------|-----------|----------|
+| [**1. Local Install**](docs/path1-local-install.md) | `npm install -g openclaw` | Token Factory | Try it now, zero overhead |
+| [**2. Docker**](docs/path2-docker.md) | `docker run` pre-built image | Token Factory | Portable, reproducible |
+| [**3. GPU Serverless**](docs/path3-gpu-serverless.md) | NemoClaw on Nebius GPU | Local model | Custom models, data privacy |
+| [**4. CPU Serverless**](docs/path4-cpu-serverless.md) | OpenClaw on Nebius CPU | Token Factory | Production, always-on |
 
-| Method | How | Best For |
-|--------|-----|----------|
-| **Web UI** | `npm start` or [one-command VM setup](#deploy-to-a-nebius-vm) | Visual deploy, endpoint management, terminal access |
-| **CLI Scripts** | `./install-openclaw-serverless.sh` | Automated, scriptable, CI/CD |
-| **GPU VM** | `./install-nemoclaw-vm.sh` | Self-hosted inference with local vLLM |
-| **Step-by-step** | Follow the [Nebius Setup Guide](NEBIUS-SETUP-GUIDE.md) | Learning, custom configurations |
+## Quick Start
+
+**Path 1 — Install locally (30 seconds):**
+```bash
+npm install -g openclaw
+export TOKEN_FACTORY_API_KEY={your-key}
+openclaw init && openclaw gateway --bind loopback --auth token
+```
+
+**Path 2 — Docker (2 minutes):**
+```bash
+docker run -e TOKEN_FACTORY_API_KEY={your-key} \
+  -e TOKEN_FACTORY_URL=https://api.tokenfactory.nebius.com/v1 \
+  -e INFERENCE_MODEL=zai-org/GLM-5 \
+  -e OPENCLAW_WEB_PASSWORD={your-password} \
+  -p 8080:8080 -p 18789:18789 \
+  ghcr.io/colygon/openclaw-serverless:latest
+```
+
+**Path 4 — Nebius CPU Serverless (3 minutes):**
+```bash
+export TOKEN_FACTORY_API_KEY={your-key}
+./install-openclaw-serverless.sh
+```
 
 ## Screenshots
 
 | Create Agent | Endpoints |
 |:---:|:---:|
-| ![Create Agent](docs/screenshot-create.png) | ![Endpoints](docs/screenshot-endpoints.png) |
+| ![Create](docs/screenshot-create.png) | ![Endpoints](docs/screenshot-endpoints.png) |
 
-| Configure & Deploy |
-|:---:|
-| ![Configure](docs/screenshot-configure.png) |
+## What's Included
 
-## Web UI Features
+| | |
+|---|---|
+| **[Deploy UI](web/)** | Browser-based deployment wizard with endpoint management |
+| **[Install Scripts](docs/path4-cpu-serverless.md)** | One-command deploy to Nebius serverless |
+| **[Docker Images](docs/path2-docker.md)** | Pre-built public images on GHCR |
+| **[Setup Guide](NEBIUS-SETUP-GUIDE.md)** | Comprehensive Nebius configuration guide |
 
-- **One-click deploy** — Choose agent, model, region, provider and deploy
-- **Multi-provider** — Token Factory, OpenRouter, or HuggingFace (all routed through Nebius GPUs)
-- **In-browser terminal** — SSH into running endpoints via xterm.js
-- **Dashboard access** — Open the OpenClaw Control UI via HTTPS reverse proxy
-- **MysteryBox integration** — Load and save API keys in Nebius secrets manager
-- **Endpoint management** — Start, stop, expand details, view model/resources
-- **Health monitoring** — Live status badges from running endpoints
-- **Multi-region** — Auto-detects Nebius CLI profiles across eu-north1, eu-west1, us-central1
-
-## Quick Start
-
-### Run locally
+## Public Docker Images
 
 ```bash
-cd web
-npm install
-npm start
-# Open http://localhost:3000
+docker pull ghcr.io/colygon/openclaw-serverless:latest   # ~400 MB
+docker pull ghcr.io/colygon/nemoclaw-serverless:latest   # ~1.1 GB
 ```
 
-### Deploy to a Nebius VM
+## Related
 
-```bash
-# SSH into any Nebius VM, then run the one-liner setup:
-curl -sSL https://raw.githubusercontent.com/colygon/openclaw-deploy/main/setup-deploy-vm.sh | bash
-```
-
-This installs Node.js, Nebius CLI, nginx (HTTPS), generates SSH keys, creates a systemd service, and opens the app at `https://<VM_IP>`.
-
-See the [Nebius Setup Guide](NEBIUS-SETUP-GUIDE.md#cloud-hosting-nebius-vm) for detailed cloud hosting instructions.
-
-## Prerequisites
-
-- **Node.js** 18+
-- **Nebius CLI** installed and logged in (`nebius iam login`)
-- At least one Nebius CLI profile configured (`~/.nebius/config.yaml`)
-
-## Configuration
-
-| Environment Variable | Default | Description |
-|---------------------|---------|-------------|
-| `PORT` | `3000` | Server port |
-| `SESSION_SECRET` | random | Set for persistent sessions across restarts |
-| `SSH_KEY_PATH` | auto-detect | Path to SSH key for endpoint access |
-
-## Architecture
-
-```
-web/
-  server.js        Express + WebSocket server (wraps Nebius CLI)
-  public/
-    index.html     SPA with sidebar navigation
-    app.js         Frontend logic (deploy wizard, endpoints, terminal)
-    style.css      Dark theme UI with responsive layout
-```
-
-The server acts as a thin wrapper around the `nebius` CLI. Authentication flows through the CLI's OAuth login — no credentials are stored in the app.
-
-## Related Projects
-
-- **[nebius-skill](https://github.com/colygon/nebius-skill)** — Claude Code skill for the Nebius CLI. Teaches Claude how to use `nebius` commands for managing VMs, endpoints, registries, and more.
-
-## Guides & Documentation
-
-| Document | Description |
-|----------|-------------|
-| [Nebius Setup Guide](NEBIUS-SETUP-GUIDE.md) | Comprehensive guide covering all deployment options, multi-region setup, troubleshooting |
-| [Build Plan](BUILD_PLAN.md) | Original architecture plan and design decisions |
-| [OpenClaw Prompt](openclaw-prompt.md) | Prompt template for installing NemoClaw locally with Token Factory |
-| [Sandbox Policy](openclaw-sandbox-policy.yaml) | OpenClaw sandbox security policy for file/network access |
-
-## Scripts
-
-| Script | Description |
-|--------|-------------|
-| [`setup-deploy-vm.sh`](setup-deploy-vm.sh) | One-command VM setup (Node.js, Nebius CLI, nginx, systemd) |
-| [`install-openclaw-serverless.sh`](install-openclaw-serverless.sh) | Deploy OpenClaw to Nebius serverless (CPU, Token Factory) |
-| [`install-nemoclaw-serverless.sh`](install-nemoclaw-serverless.sh) | Deploy NemoClaw to Nebius serverless (CPU, Token Factory) |
-| [`install-nemoclaw-vm.sh`](install-nemoclaw-vm.sh) | Deploy NemoClaw to a Nebius GPU VM (local vLLM inference) |
-| [`deploy-cloud.sh`](deploy-cloud.sh) | Provision a VM and deploy the web UI to it |
-| [`entrypoint.sh`](entrypoint.sh) | Container entrypoint for OpenClaw serverless image |
-| [`healthcheck.sh`](healthcheck.sh) | Container health check script |
-
-## Deployment Options
-
-| Option | GPU | Inference | Best For |
-|--------|-----|-----------|----------|
-| **OpenClaw Serverless** | No (cpu-e2) | Token Factory | Lightest, cheapest |
-| **NemoClaw Serverless** | No (cpu-e2) | Token Factory | Agent orchestration, no GPU |
-| **NemoClaw GPU VM** | H100/H200 | Local vLLM | Full self-hosted, max control |
-| **Web Deploy UI** | Any | Token Factory / OpenRouter / HuggingFace | Browser-based multi-region deploy |
-
-See the [Nebius Setup Guide](NEBIUS-SETUP-GUIDE.md) for detailed instructions on each option.
-
-## Security
-
-- **CLI auth** — authenticates via your existing Nebius CLI session (OAuth)
-- **No stored secrets** — API keys are passed to endpoints at deploy time, not persisted
-- **HTTPS** — nginx reverse proxy with SSL for cloud deployments
-- **Input validation** — all user inputs validated before use in CLI commands
-- **XSS protection** — all dynamic content is HTML-escaped
+- **[nebius-skill](https://github.com/colygon/nebius-skill)** — Claude Code skill for managing Nebius infrastructure
+- **[OpenClaw](https://github.com/nichochar/openclaw)** — The open-source AI agent platform
+- **[Token Factory](https://tokenfactory.nebius.com)** — Nebius managed GPU inference API
 
 ## License
 
