@@ -3,6 +3,8 @@ let state = {
   selectedImage: null,
   selectedModel: null,
   selectedRegion: null,
+  selectedPlatform: 'cpu',      // 'gpu' | 'cpu' | 'custom'
+  customPlatformValue: null,    // 'platform:preset' e.g. 'gpu-h100-sxm:1gpu-16vcpu-200gb'
   selectedProvider: 'token-factory',
   authenticated: false
 };
@@ -195,6 +197,7 @@ async function checkAuth() {
       loadImages();
       loadModels();
       loadRegions();
+      loadPlatformCards();
       loadProviders();
       loadEndpoints();
       loadMysteryBoxSecrets();
@@ -498,6 +501,116 @@ function selectRegion(key) {
   updateDeployButton();
 }
 
+// ── Platform Selection ───────────────────────────────────────────────────────
+
+const PLATFORMS = {
+  'cpu': {
+    icon: '⚡',
+    name: 'CPU Only',
+    desc: 'Lowest cost · Best for API models'
+  },
+  'gpu': {
+    icon: '🚀',
+    name: 'GPU',
+    desc: 'H100 · L40S · H200 available'
+  },
+  'custom': {
+    icon: '⚙️',
+    name: 'Custom',
+    desc: 'Choose vCPUs, RAM, GPU model'
+  }
+};
+
+function loadPlatformCards() {
+  const grid = document.getElementById('platform-cards');
+  grid.innerHTML = '';
+  for (const [key, platform] of Object.entries(PLATFORMS)) {
+    const card = document.createElement('div');
+    card.className = 'select-card' + (key === state.selectedPlatform ? ' selected' : '');
+    card.dataset.key = key;
+    card.innerHTML = `
+      <div class="card-icon">${platform.icon}</div>
+      <div class="card-title">${esc(platform.name)}</div>
+      <div class="card-desc">${esc(platform.desc)}</div>
+    `;
+    card.onclick = () => selectPlatform(key);
+    grid.appendChild(card);
+  }
+}
+
+async function selectPlatform(key) {
+  state.selectedPlatform = key;
+  state.customPlatformValue = null;
+
+  document.querySelectorAll('#platform-cards .select-card').forEach(c => {
+    c.classList.toggle('selected', c.dataset.key === key);
+  });
+
+  const picker = document.getElementById('custom-platform-picker');
+  if (key === 'custom') {
+    picker.classList.remove('hidden');
+    await loadCustomPlatformOptions();
+  } else {
+    picker.classList.add('hidden');
+  }
+
+  updateDeployButton();
+}
+
+async function loadCustomPlatformOptions() {
+  const select = document.getElementById('custom-platform-select');
+  select.innerHTML = '<option value="">Loading...</option>';
+  select.disabled = true;
+
+  try {
+    const region = state.selectedRegion || '';
+    const res = await authFetch(`/api/platforms?region=${encodeURIComponent(region)}`);
+    const platforms = await res.json();
+
+    const cpuOpts = [];
+    const gpuOpts = [];
+
+    for (const p of platforms) {
+      const isGpu = p.id.startsWith('gpu-');
+      const gpuModel = p.id.replace('gpu-', '').replace(/-[a-z]$/, '').toUpperCase();
+      for (const pr of p.presets) {
+        const vcpu = pr.vcpu;
+        const mem = pr.memory_gib;
+        const gpu = pr.gpu_count;
+        let label;
+        if (isGpu) {
+          label = `${gpuModel} — ${gpu}× GPU, ${vcpu} vCPUs, ${mem} GiB`;
+        } else {
+          label = `${p.id.replace('cpu-', 'CPU ').toUpperCase()} — ${vcpu} vCPUs, ${mem} GiB`;
+        }
+        const value = `${p.id}:${pr.name}`;
+        const opt = `<option value="${esc(value)}">${esc(label)}</option>`;
+        (isGpu ? gpuOpts : cpuOpts).push(opt);
+      }
+    }
+
+    let html = '';
+    if (gpuOpts.length) html += `<optgroup label="GPU Platforms">${gpuOpts.join('')}</optgroup>`;
+    if (cpuOpts.length) html += `<optgroup label="CPU Platforms">${cpuOpts.join('')}</optgroup>`;
+    select.innerHTML = html || '<option value="">No platforms available</option>';
+    select.disabled = false;
+
+    // Auto-select first option
+    if (select.options.length > 0) {
+      select.selectedIndex = 0;
+      selectCustomPlatformPreset(select.value);
+    }
+  } catch (err) {
+    select.innerHTML = '<option value="">Failed to load platforms</option>';
+    select.disabled = false;
+  }
+}
+
+function selectCustomPlatformPreset(value) {
+  state.customPlatformValue = value || null;
+  updateDeployButton();
+}
+
 // ── Provider Selection ──────────────────────────────────────────────────────
 const PROVIDERS = {
   'token-factory': {
@@ -749,6 +862,8 @@ async function deploy() {
       imageType: state.selectedImage,
       model: state.selectedModel,
       region: state.selectedRegion,
+      platform: state.selectedPlatform,
+      platformPreset: state.selectedPlatform === 'custom' ? state.customPlatformValue : null,
       provider: state.selectedProvider,
       customImage: document.getElementById('custom-image-url')?.value || '',
       endpointName: document.getElementById('endpoint-name').value || '',

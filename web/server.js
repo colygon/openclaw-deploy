@@ -603,6 +603,29 @@ app.get('/api/build/:id', requireAuth, (req, res) => {
   });
 });
 
+// ── Routes: Platforms ──────────────────────────────────────────────────────
+
+app.get('/api/platforms', requireAuth, (req, res) => {
+  const region = req.query.region;
+  const profile = region ? (REGION_PROFILES[region] || Object.values(REGION_PROFILES).find(Boolean)) : Object.values(REGION_PROFILES).find(Boolean);
+
+  try {
+    const data = nebiusJson('compute platform list', profile);
+    const platforms = (data.items || []).map(p => ({
+      id: p.metadata.name,
+      presets: (p.spec?.presets || []).map(pr => ({
+        name: pr.name,
+        vcpu: pr.resources?.vcpu_count || 0,
+        memory_gib: pr.resources?.memory_gib || 0,
+        gpu_count: pr.resources?.gpu_count || 0
+      }))
+    }));
+    res.json(platforms);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── Routes: Models (Token Factory) ────────────────────────────────────────
 let cachedModels = null;
 let modelsCacheTime = 0;
@@ -740,7 +763,7 @@ app.post('/api/deploy', requireAuth, async (req, res) => {
     });
   }
 
-  const { imageType, model, region, provider, customImage, endpointName, apiKey } = req.body;
+  const { imageType, model, region, platform, platformPreset, provider, customImage, endpointName, apiKey } = req.body;
 
   if (!imageType || !region) {
     return res.status(400).json({ error: 'imageType and region are required' });
@@ -833,37 +856,67 @@ app.post('/api/deploy', requireAuth, async (req, res) => {
     const profile = REGION_PROFILES[region] || Object.values(REGION_PROFILES)[0];
     const profileFlag = `--profile ${profile}`;
 
-    // Auto-detect cheapest CPU platform in this region
-    try {
-      const platforms = nebiusJson('compute platform list', profile);
-      const cpuPlatforms = (platforms.items || []).filter(p =>
-        p.metadata.name.startsWith('cpu-')
-      );
+    // Resolve platform and preset based on user selection
+    if (platform === 'custom' && platformPreset) {
+      // User picked a specific platform:preset from the dropdown
+      const [customPlat, customPreset] = platformPreset.split(':');
+      regionConfig.cpuPlatform = customPlat;
+      regionConfig.cpuPreset = customPreset;
+      console.log(`[Deploy] Custom platform: ${customPlat} / ${customPreset}`);
+    } else if (platform === 'gpu') {
+      // Auto-detect cheapest single-GPU platform in this region
+      try {
+        const platforms = nebiusJson('compute platform list', profile);
+        const gpuPlatforms = (platforms.items || []).filter(p => p.metadata.name.startsWith('gpu-'));
+        let cheapestGpu = null;
+        let cheapestGpuCount = Infinity;
 
-      if (cpuPlatforms.length > 0) {
-        // Pick the platform with the smallest preset (least vCPUs = cheapest)
-        let cheapest = null;
-        let cheapestVcpu = Infinity;
-
-        for (const plat of cpuPlatforms) {
-          const presets = plat.spec?.presets || [];
-          for (const pr of presets) {
-            const vcpu = pr.resources?.vcpu_count || Infinity;
-            if (vcpu < cheapestVcpu) {
-              cheapestVcpu = vcpu;
-              cheapest = { platform: plat.metadata.name, preset: pr.name };
+        for (const plat of gpuPlatforms) {
+          for (const pr of (plat.spec?.presets || [])) {
+            const gpuCount = pr.resources?.gpu_count || Infinity;
+            if (gpuCount < cheapestGpuCount) {
+              cheapestGpuCount = gpuCount;
+              cheapestGpu = { platform: plat.metadata.name, preset: pr.name };
             }
           }
         }
-
-        if (cheapest) {
-          regionConfig.cpuPlatform = cheapest.platform;
-          regionConfig.cpuPreset = cheapest.preset;
-          console.log(`Auto-detected cheapest CPU in ${region}: ${cheapest.platform} / ${cheapest.preset} (${cheapestVcpu} vCPUs)`);
+        if (cheapestGpu) {
+          regionConfig.cpuPlatform = cheapestGpu.platform;
+          regionConfig.cpuPreset = cheapestGpu.preset;
+          console.log(`[Deploy] Auto-detected cheapest GPU in ${region}: ${cheapestGpu.platform} / ${cheapestGpu.preset}`);
         }
+      } catch (err) {
+        console.log(`GPU platform detection failed for ${region}, using default: ${err.message.split('\n')[0]}`);
       }
-    } catch (err) {
-      console.log(`Platform detection failed for ${region}, using default: ${err.message.split('\n')[0]}`);
+    } else {
+      // Default: auto-detect cheapest CPU platform in this region
+      try {
+        const platforms = nebiusJson('compute platform list', profile);
+        const cpuPlatforms = (platforms.items || []).filter(p => p.metadata.name.startsWith('cpu-'));
+
+        if (cpuPlatforms.length > 0) {
+          let cheapest = null;
+          let cheapestVcpu = Infinity;
+
+          for (const plat of cpuPlatforms) {
+            for (const pr of (plat.spec?.presets || [])) {
+              const vcpu = pr.resources?.vcpu_count || Infinity;
+              if (vcpu < cheapestVcpu) {
+                cheapestVcpu = vcpu;
+                cheapest = { platform: plat.metadata.name, preset: pr.name };
+              }
+            }
+          }
+
+          if (cheapest) {
+            regionConfig.cpuPlatform = cheapest.platform;
+            regionConfig.cpuPreset = cheapest.preset;
+            console.log(`[Deploy] Auto-detected cheapest CPU in ${region}: ${cheapest.platform} / ${cheapest.preset} (${cheapestVcpu} vCPUs)`);
+          }
+        }
+      } catch (err) {
+        console.log(`CPU platform detection failed for ${region}, using default: ${err.message.split('\n')[0]}`);
+      }
     }
 
     // Find or create registry in this region

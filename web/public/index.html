@@ -113,20 +113,34 @@
               <div class="card-grid" id="region-cards"></div>
             </section>
 
-            <!-- Step 4: Choose Provider -->
+            <!-- Step 4: Choose Platform -->
             <section class="step">
               <div class="step-header">
                 <span class="step-num">4</span>
+                <h3>Choose Platform</h3>
+              </div>
+              <div class="card-grid" id="platform-cards"></div>
+              <div id="custom-platform-picker" class="custom-platform-picker hidden">
+                <select id="custom-platform-select" class="form-select" onchange="selectCustomPlatformPreset(this.value)">
+                  <option value="">Loading platforms...</option>
+                </select>
+              </div>
+            </section>
+
+            <!-- Step 5: Choose Provider -->
+            <section class="step">
+              <div class="step-header">
+                <span class="step-num">5</span>
                 <h3>Choose API Provider</h3>
               </div>
               <div class="card-grid" id="provider-cards"></div>
               <p class="step-hint">All providers route inference through <strong>Nebius</strong> GPUs</p>
             </section>
 
-            <!-- Step 5: Configure -->
+            <!-- Step 6: Configure -->
             <section class="step">
               <div class="step-header">
-                <span class="step-num">5</span>
+                <span class="step-num">6</span>
                 <h3>Configure</h3>
               </div>
               <div class="config-form">

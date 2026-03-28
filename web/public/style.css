@@ -1047,6 +1047,14 @@ body {
   margin-bottom: 0.3rem;
 }
 
+.custom-platform-picker {
+  margin-top: 0.8rem;
+}
+
+.custom-platform-picker .form-select {
+  width: 100%;
+}
+
 /* ── Config Form ──────────────────────────────────────────────────── */
 .config-form {
   display: grid;
