@@ -2,6 +2,8 @@
 
 Deploy [OpenClaw](https://github.com/nichochar/openclaw) AI agents to [Nebius Cloud](https://nebius.com).
 
+**[→ Open the Deploy UI at claw.moi](https://claw.moi)**
+
 ## Choose Your Path
 
 | Path | Method | Inference | Best For |
