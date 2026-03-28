@@ -406,7 +406,10 @@ async function loadTokenFactoryModels() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ apiKey })
     });
-    if (!res.ok) throw new Error('Failed to load models');
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || 'Failed to load models');
+    }
     const models = await res.json();
 
     if (models.length === 0) {
@@ -615,6 +618,17 @@ async function selectMysteryBoxSecret(secretId, el) {
     const res = await authFetch(`/api/secrets/${encodeURIComponent(secretId)}/payload`);
     const payload = await res.json();
 
+    if (res.status === 403) {
+      if (badge) {
+        badge.textContent = 'no access';
+        badge.style.background = 'rgba(239, 68, 68, 0.15)';
+        badge.style.color = 'var(--red)';
+        badge.title = 'Service account needs viewer role on this project.';
+      }
+      console.warn('MysteryBox permission denied. Fix with:\nnebius iam access-permit create --parent-id serviceaccount-e00e26wydmhyd6qdsn --resource-id project-e00r2jeapr00j2q7e7n3yn --role viewer');
+      el.classList.remove('loading');
+      return;
+    }
     if (res.ok) {
       // Determine which API key field to fill based on active provider
       const fieldMap = {

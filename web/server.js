@@ -354,6 +354,12 @@ app.get('/api/secrets/:id/payload', requireAuth, (req, res) => {
     }
     res.json(payload);
   } catch (err) {
+    const isPermDenied = err.message.includes('PermissionDenied') || err.message.includes('Permission denied');
+    if (isPermDenied) {
+      return res.status(403).json({
+        error: 'Permission denied: the service account cannot read secret payloads. Run: nebius iam access-permit create --parent-id serviceaccount-e00e26wydmhyd6qdsn --resource-id project-e00r2jeapr00j2q7e7n3yn --role viewer'
+      });
+    }
     res.status(500).json({ error: `Failed to retrieve secret: ${err.message.split('\n')[0]}` });
   }
 });
@@ -614,8 +620,8 @@ app.post('/api/models', requireAuth, async (req, res) => {
   try {
     const tfUrl = 'https://api.tokenfactory.nebius.com/v1/models';
 
-    // Try user-provided API key first, then try to get one from MysteryBox
-    let authToken = req.body.apiKey || '';
+    // Try user-provided API key first, then env var, then MysteryBox
+    let authToken = req.body.apiKey || process.env.TOKEN_FACTORY_API_KEY || '';
     if (!authToken) {
       try {
         const secretsJson = execSync('nebius mysterybox secret list --format json', { encoding: 'utf-8', timeout: 15000 });
@@ -635,7 +641,7 @@ app.post('/api/models', requireAuth, async (req, res) => {
     }
 
     if (!authToken) {
-      throw new Error('No Token Factory API key available');
+      throw new Error('Enter your Token Factory API key above, then click Load Models');
     }
 
     const response = await fetch(tfUrl, {
