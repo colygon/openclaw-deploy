@@ -1240,6 +1240,92 @@ input::placeholder { color: #555566; }
   gap: 0.4rem;
 }
 
+/* ── Getting Started Page ─────────────────────────────────────────── */
+.gs-page {
+  max-width: 680px;
+}
+
+.gs-step {
+  display: flex;
+  gap: 1.25rem;
+  align-items: flex-start;
+}
+
+.gs-step-num {
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  font-weight: 700;
+  font-size: 0.9rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 2px;
+}
+
+.gs-step-body {
+  flex: 1;
+}
+
+.gs-step-body h3 {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text-bright);
+  margin-bottom: 0.5rem;
+}
+
+.gs-step-body p {
+  font-size: 0.875rem;
+  color: var(--text);
+  line-height: 1.6;
+  margin-bottom: 0.75rem;
+}
+
+.gs-bullets {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 0.75rem 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.gs-bullets li {
+  font-size: 0.8125rem;
+  color: var(--text-dim);
+  padding-left: 1rem;
+  position: relative;
+  line-height: 1.5;
+}
+
+.gs-bullets li::before {
+  content: '·';
+  position: absolute;
+  left: 0;
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.gs-note {
+  font-size: 0.8125rem !important;
+  color: var(--text-dim) !important;
+  font-style: italic;
+}
+
+.gs-action {
+  margin-top: 0.25rem;
+}
+
+.gs-connector {
+  width: 2px;
+  height: 24px;
+  background: var(--border);
+  margin-left: 17px;
+}
+
 /* ── Docker Registry Page ──────────────────────────────────────────── */
 .registries-list {
   display: flex;
