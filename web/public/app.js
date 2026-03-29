@@ -538,6 +538,24 @@ function loadPlatformCards() {
   }
 }
 
+function isGpuSelected() {
+  if (state.selectedPlatform === 'gpu') return true;
+  if (state.selectedPlatform === 'custom' && state.customPlatformValue) {
+    return state.customPlatformValue.startsWith('gpu-');
+  }
+  return false;
+}
+
+function updateProviderStepVisibility() {
+  const providerStep = document.getElementById('provider-step');
+  if (!providerStep) return;
+  if (isGpuSelected()) {
+    providerStep.classList.add('hidden');
+  } else {
+    providerStep.classList.remove('hidden');
+  }
+}
+
 async function selectPlatform(key) {
   state.selectedPlatform = key;
   state.customPlatformValue = null;
@@ -554,6 +572,7 @@ async function selectPlatform(key) {
     picker.classList.add('hidden');
   }
 
+  updateProviderStepVisibility();
   updateDeployButton();
 }
 
@@ -608,6 +627,7 @@ async function loadCustomPlatformOptions() {
 
 function selectCustomPlatformPreset(value) {
   state.customPlatformValue = value || null;
+  updateProviderStepVisibility();
   updateDeployButton();
 }
 
@@ -828,7 +848,9 @@ async function saveToMysteryBox(provider) {
 // ── Deploy ───────────────────────────────────────────────────────────────────
 function updateDeployButton() {
   const btn = document.getElementById('deploy-btn');
-  btn.disabled = !(state.selectedImage && state.selectedModel && state.selectedRegion);
+  const baseReady = !!(state.selectedImage && state.selectedModel && state.selectedRegion);
+  const platformReady = state.selectedPlatform !== 'custom' || !!state.customPlatformValue;
+  btn.disabled = !(baseReady && platformReady);
 }
 
 // Listen for API key input on any provider key field
@@ -842,9 +864,10 @@ async function deploy() {
   const btn = document.getElementById('deploy-btn');
   const statusEl = document.getElementById('deploy-status');
 
-  const apiKey = getActiveApiKey();
-  const providerLabels = { 'token-factory': 'Token Factory', 'openrouter': 'OpenRouter', 'huggingface': 'HuggingFace' };
-  if (!apiKey) {
+  const gpu = isGpuSelected();
+  const apiKey = gpu ? '' : getActiveApiKey();
+  if (!gpu && !apiKey) {
+    const providerLabels = { 'token-factory': 'Token Factory', 'openrouter': 'OpenRouter', 'huggingface': 'HuggingFace' };
     statusEl.className = 'deploy-status error';
     statusEl.textContent = `${providerLabels[state.selectedProvider]} API key is required`;
     statusEl.classList.remove('hidden');

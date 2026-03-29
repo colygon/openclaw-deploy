@@ -774,7 +774,8 @@ app.post('/api/deploy', requireAuth, async (req, res) => {
     return res.status(400).json({ error: `Unknown region: ${region}` });
   }
 
-  if (!apiKey) {
+  const isGpuPlatform = platform === 'gpu' || (platform === 'custom' && platformPreset && platformPreset.startsWith('gpu-'));
+  if (!isGpuPlatform && !apiKey) {
     const providerLabels = { 'token-factory': 'Token Factory', 'openrouter': 'OpenRouter', 'huggingface': 'HuggingFace' };
     return res.status(400).json({ error: `${providerLabels[provider] || 'API'} key is required` });
   }
@@ -985,24 +986,26 @@ app.post('/api/deploy', requireAuth, async (req, res) => {
     const webPassword = crypto.randomBytes(24).toString('base64url');
     envFlags.push(`--env "OPENCLAW_WEB_PASSWORD=${webPassword}"`);
 
-    switch (provider) {
-      case 'openrouter':
-        envFlags.push(`--env "OPENROUTER_API_KEY=${apiKey}"`);
-        envFlags.push('--env "INFERENCE_URL=https://openrouter.ai/api/v1"');
-        envFlags.push('--env "INFERENCE_PROVIDER=openrouter"');
-        envFlags.push('--env "OPENROUTER_PROVIDER_ONLY=nebius"');
-        break;
-      case 'huggingface':
-        envFlags.push(`--env "HUGGINGFACE_API_KEY=${apiKey}"`);
-        envFlags.push('--env "INFERENCE_PROVIDER=huggingface"');
-        envFlags.push('--env "HUGGINGFACE_PROVIDER=nebius"');
-        envFlags.push(`--env "HF_TOKEN=${apiKey}"`);
-        break;
-      case 'token-factory':
-      default:
-        envFlags.push(`--env "TOKEN_FACTORY_API_KEY=${apiKey}"`);
-        envFlags.push('--env "TOKEN_FACTORY_URL=https://api.tokenfactory.nebius.com/v1"');
-        break;
+    if (!isGpuPlatform) {
+      switch (provider) {
+        case 'openrouter':
+          envFlags.push(`--env "OPENROUTER_API_KEY=${apiKey}"`);
+          envFlags.push('--env "INFERENCE_URL=https://openrouter.ai/api/v1"');
+          envFlags.push('--env "INFERENCE_PROVIDER=openrouter"');
+          envFlags.push('--env "OPENROUTER_PROVIDER_ONLY=nebius"');
+          break;
+        case 'huggingface':
+          envFlags.push(`--env "HUGGINGFACE_API_KEY=${apiKey}"`);
+          envFlags.push('--env "INFERENCE_PROVIDER=huggingface"');
+          envFlags.push('--env "HUGGINGFACE_PROVIDER=nebius"');
+          envFlags.push(`--env "HF_TOKEN=${apiKey}"`);
+          break;
+        case 'token-factory':
+        default:
+          envFlags.push(`--env "TOKEN_FACTORY_API_KEY=${apiKey}"`);
+          envFlags.push('--env "TOKEN_FACTORY_URL=https://api.tokenfactory.nebius.com/v1"');
+          break;
+      }
     }
 
     // Find SSH public key to authorize on the endpoint
