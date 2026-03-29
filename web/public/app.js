@@ -272,6 +272,7 @@ function switchPage(page) {
   // Refresh data when switching pages
   if (page === 'endpoints') loadEndpoints();
   if (page === 'registry') loadRegistries();
+  if (page === 'chat') initChat();
 }
 
 // ── Load Images ──────────────────────────────────────────────────────────────
