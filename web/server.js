@@ -45,6 +45,84 @@ app.use(session({
   cookie: { secure: false, httpOnly: true, sameSite: 'lax', maxAge: 24 * 60 * 60 * 1000 }
 }));
 
+// ── Admin / Event Logger ────────────────────────────────────────────────────
+// Must be defined before loadNebiusConfig() is called at module load time.
+const ADMIN_PASSWORD    = process.env.ADMIN_PASSWORD || null;
+const ADMIN_ENABLED     = !IS_VERCEL && !!ADMIN_PASSWORD;
+const EVENT_BUFFER_SIZE = 2000;
+const eventBuffer       = [];
+let   eventIdCounter    = 0;
+const adminSseClients   = new Set();
+
+const SENSITIVE_KEYS = new Set([
+  'apiKey', 'api_key', 'token', 'password', 'secret',
+  'TOKEN_FACTORY_API_KEY', 'OPENCLAW_WEB_PASSWORD',
+  'OPENROUTER_API_KEY', 'HUGGINGFACE_API_KEY', 'HF_TOKEN',
+  'webPassword', 'gatewayToken', 'authToken',
+]);
+
+function sanitizeContext(ctx) {
+  if (!ctx || typeof ctx !== 'object') return ctx;
+  const out = {};
+  for (const [k, v] of Object.entries(ctx)) {
+    if (SENSITIVE_KEYS.has(k)) {
+      out[k] = '[REDACTED]';
+    } else if (typeof v === 'string' && v.length > 80 && /key|token|secret|password/i.test(k)) {
+      out[k] = '[REDACTED]';
+    } else if (v && typeof v === 'object') {
+      out[k] = sanitizeContext(v);
+    } else {
+      out[k] = v;
+    }
+  }
+  return out;
+}
+
+function emitEvent(level, category, message, context) {
+  const record = {
+    id: ++eventIdCounter,
+    timestamp: new Date().toISOString(),
+    level, category, message,
+    context: sanitizeContext(context) || null,
+  };
+  if (eventBuffer.length >= EVENT_BUFFER_SIZE) eventBuffer.shift();
+  eventBuffer.push(record);
+  const pfx = `[${category}]`;
+  if (level === 'error')     console.error(pfx, message, record.context || '');
+  else if (level === 'warn') console.warn(pfx, message, record.context || '');
+  else                       console.log(pfx, message, record.context || '');
+  if (adminSseClients.size > 0) {
+    const payload = `data: ${JSON.stringify(record)}\n\n`;
+    for (const client of adminSseClients) {
+      try { client.write(payload); } catch (_) { adminSseClients.delete(client); }
+    }
+  }
+}
+
+const eventLog = {
+  debug: (cat, msg, ctx) => emitEvent('debug', cat, msg, ctx),
+  info:  (cat, msg, ctx) => emitEvent('info',  cat, msg, ctx),
+  warn:  (cat, msg, ctx) => emitEvent('warn',  cat, msg, ctx),
+  error: (cat, msg, ctx) => emitEvent('error', cat, msg, ctx),
+};
+
+// ── Per-request API logging (debug level, skipped on Vercel) ───────────────
+if (!IS_VERCEL) {
+  app.use((req, res, next) => {
+    if (req.path.startsWith('/admin/api/stream')) return next(); // SSE — too noisy
+    if (!req.path.startsWith('/api/') && !req.path.startsWith('/admin/')) return next();
+    const start = Date.now();
+    res.on('finish', () => {
+      emitEvent('debug', 'API', `${req.method} ${req.path}`, {
+        status: res.statusCode,
+        duration: Date.now() - start,
+        session: req.session?.authenticated ? 'auth' : 'anon',
+      });
+    });
+    next();
+  });
+}
+
 // ── Auto-detect Nebius config from CLI ────────────────────────────────────
 const REGION_META = {
   'eu-north1':   { name: 'EU North (Finland)', flag: '🇫🇮', registry: 'cr.eu-north1.nebius.cloud',   cpuPlatform: 'cpu-e2' },
@@ -55,8 +133,7 @@ const REGION_META = {
 function loadNebiusConfig() {
   const configPath = process.env.NEBIUS_CONFIG_PATH || path.join(process.env.HOME, '.nebius', 'config.yaml');
   if (!fs.existsSync(configPath)) {
-    console.warn('⚠ No Nebius CLI config found at', configPath);
-    console.warn('  Run: nebius iam login');
+    eventLog.warn('SYSTEM', 'No Nebius CLI config found', { configPath, hint: 'Run: nebius iam login' });
     return { regions: {}, profiles: {}, tenantId: null };
   }
 
@@ -119,10 +196,10 @@ function loadNebiusConfig() {
       }
     }
 
-    console.log(`  Loaded ${Object.keys(regions).length} region(s) from ${configPath}`);
+    eventLog.info('SYSTEM', 'Nebius config loaded', { regionCount: Object.keys(regions).length, configPath });
     return { regions, profiles, tenantId };
   } catch (err) {
-    console.error('Failed to parse Nebius config:', err.message);
+    eventLog.error('SYSTEM', 'Failed to parse Nebius config', { error: err.message });
     return { regions: {}, profiles: {}, tenantId: null };
   }
 }
@@ -228,15 +305,31 @@ function nebius(cmd, profile) {
     throw new Error('Invalid profile name');
   }
   const profileFlag = profile ? `--profile ${profile}` : '';
+
+  // Sanitize command for logging — redact --env "KEY=VALUE" pairs
+  const safeCmd = cmd.replace(
+    /--env\s+"([^"]*(?:KEY|TOKEN|PASSWORD|SECRET)[^"=]*)=[^"]+"/gi,
+    (_, name) => `--env "${name}=[REDACTED]"`
+  );
+  const cmdLabel = safeCmd.split(' ').slice(0, 4).join(' ');
+
+  const start = Date.now();
   try {
     const result = execSync(`nebius ${profileFlag} ${cmd}`, {
       encoding: 'utf-8',
       timeout: 30000,
       env: { ...process.env, PATH: process.env.PATH }
     });
+    emitEvent('debug', 'NEBIUS', cmdLabel, { duration: Date.now() - start, profile: profile || null });
     return result.trim();
   } catch (err) {
-    throw new Error(err.stderr || err.message);
+    const fullStderr = err.stderr || err.message;
+    emitEvent('error', 'NEBIUS', `CLI error: ${cmdLabel}`, {
+      duration: Date.now() - start,
+      profile: profile || null,
+      error: fullStderr,
+    });
+    throw new Error(fullStderr);
   }
 }
 
@@ -255,10 +348,10 @@ try {
   if (fs.existsSync(PASSWORDS_FILE)) {
     const saved = JSON.parse(fs.readFileSync(PASSWORDS_FILE, 'utf-8'));
     Object.assign(endpointPasswords, saved);
-    console.log(`[Passwords] Loaded ${Object.keys(saved).length} saved passwords`);
+    eventLog.info('SYSTEM', 'Endpoint passwords loaded', { count: Object.keys(saved).length });
   }
 } catch (e) {
-  console.error('[Passwords] Failed to load:', e.message);
+  eventLog.error('SYSTEM', 'Failed to load endpoint passwords', { error: e.message });
 }
 
 function storePassword(name, password) {
@@ -295,6 +388,7 @@ app.get('/api/auth/status', (req, res) => {
         user = attrs.name || attrs.given_name || attrs.email || identity.user_profile?.id || 'Nebius User';
       } catch (e) {}
 
+      eventLog.info('AUTH', 'Session authenticated', { user });
       res.json({ authenticated: true, user });
     } else {
       res.json({ authenticated: false });
@@ -309,7 +403,7 @@ app.post('/api/auth/login', (req, res) => {
   try {
     // This opens the browser for OAuth — runs async
     exec('nebius iam login', (err) => {
-      if (err) console.error('Login error:', err.message);
+      if (err) eventLog.error('AUTH', 'nebius iam login failed', { error: err.message });
     });
     res.json({ message: 'Login initiated — check your browser' });
   } catch (err) {
@@ -356,6 +450,7 @@ app.get('/api/secrets/:id/payload', requireAuth, (req, res) => {
   } catch (err) {
     const isPermDenied = err.message.includes('PermissionDenied') || err.message.includes('Permission denied');
     if (isPermDenied) {
+      eventLog.error('MYSTERYBOX', 'Secret payload access denied', { secretId: req.params.id });
       return res.status(403).json({
         error: 'Permission denied: the service account cannot read secret payloads. Run: nebius iam access-permit create --parent-id serviceaccount-e00e26wydmhyd6qdsn --resource-id project-e00r2jeapr00j2q7e7n3yn --role viewer'
       });
@@ -659,7 +754,7 @@ app.post('/api/models', requireAuth, async (req, res) => {
           if (entry) authToken = entry.string_value || entry.text_value || '';
         }
       } catch (e) {
-        console.warn('[Models] Could not fetch TF key from MysteryBox:', e.message);
+        eventLog.warn('MYSTERYBOX', 'Could not fetch TF key from MysteryBox', { error: e.message });
       }
     }
 
@@ -684,7 +779,7 @@ app.post('/api/models', requireAuth, async (req, res) => {
 
     res.json(cachedModels);
   } catch (err) {
-    console.error('Failed to fetch models:', err.message);
+    eventLog.error('API', 'Failed to fetch models', { error: err.message });
     res.status(500).json({ error: err.message });
   }
 });
@@ -732,7 +827,7 @@ app.get('/api/endpoints', requireAuth, async (req, res) => {
       }
     } catch (err) {
       // Region query failed — skip silently
-      console.log(`Skipping ${region} (${profile}): ${err.message.split('\n')[0]}`);
+      eventLog.warn('NEBIUS', 'Region query failed, skipping', { region, profile, error: err.message.split('\n')[0] });
     }
   }
 
@@ -781,6 +876,7 @@ app.post('/api/deploy', requireAuth, async (req, res) => {
   }
 
   const name = endpointName || `${imageType}-${region}-${Date.now().toString(36)}`;
+  eventLog.info('DEPLOY', 'Deploy request received', { imageType, model, region, platform, provider, name });
 
   try {
     // Find or create project for this region
@@ -791,7 +887,7 @@ app.post('/api/deploy', requireAuth, async (req, res) => {
           return res.status(500).json({ error: 'No tenant ID found. Check your Nebius CLI config.' });
         }
         const projName = `openclaw-${region}`;
-        console.log(`Setting up project for ${region}...`);
+        eventLog.info('DEPLOY', 'Setting up project for region', { region });
 
         // List all projects at tenant level and find one in the right region
         const firstProfile = Object.values(REGION_PROFILES)[0];
@@ -808,9 +904,9 @@ app.post('/api/deploy', requireAuth, async (req, res) => {
 
         if (picked) {
           projectId = picked.metadata.id;
-          console.log(`Using existing project "${picked.metadata.name}" (${projectId}) in ${region}`);
+          eventLog.info('DEPLOY', 'Using existing project', { name: picked.metadata.name, projectId, region });
         } else {
-          console.log(`Creating project "${projName}"...`);
+          eventLog.info('DEPLOY', 'Creating new project', { projName, region });
           const projResult = nebius(
             `iam project create --name "${projName}" --parent-id ${TENANT_ID} --format json`,
             firstProfile
@@ -839,13 +935,13 @@ app.post('/api/deploy', requireAuth, async (req, res) => {
             `profiles:\n${profileBlock}\n`
           );
           fs.writeFileSync(configPath, config, 'utf-8');
-          console.log(`Wrote profile ${region} to config`);
+          eventLog.info('SYSTEM', 'Wrote new profile to Nebius config', { region });
         }
 
         // Update REGION_PROFILES so endpoint polling picks it up
         REGION_PROFILES[region] = region;
 
-        console.log(`Created project ${projectId} for ${region}`);
+        eventLog.info('DEPLOY', 'Created project', { projectId, region });
       } catch (err) {
         return res.status(500).json({
           error: `Failed to create project in ${region}: ${err.message.split('\n')[0]}`
@@ -863,7 +959,7 @@ app.post('/api/deploy', requireAuth, async (req, res) => {
       const [customPlat, customPreset] = platformPreset.split(':');
       regionConfig.cpuPlatform = customPlat;
       regionConfig.cpuPreset = customPreset;
-      console.log(`[Deploy] Custom platform: ${customPlat} / ${customPreset}`);
+      eventLog.info('DEPLOY', 'Custom platform selected', { platform: customPlat, preset: customPreset });
     } else if (platform === 'gpu') {
       // Auto-detect cheapest single-GPU platform in this region
       try {
@@ -884,10 +980,10 @@ app.post('/api/deploy', requireAuth, async (req, res) => {
         if (cheapestGpu) {
           regionConfig.cpuPlatform = cheapestGpu.platform;
           regionConfig.cpuPreset = cheapestGpu.preset;
-          console.log(`[Deploy] Auto-detected cheapest GPU in ${region}: ${cheapestGpu.platform} / ${cheapestGpu.preset}`);
+          eventLog.info('DEPLOY', 'Auto-detected cheapest GPU', { region, platform: cheapestGpu.platform, preset: cheapestGpu.preset });
         }
       } catch (err) {
-        console.log(`GPU platform detection failed for ${region}, using default: ${err.message.split('\n')[0]}`);
+        eventLog.warn('DEPLOY', 'GPU platform detection failed', { region, error: err.message.split('\n')[0] });
       }
     } else {
       // Default: auto-detect cheapest CPU platform in this region
@@ -912,11 +1008,11 @@ app.post('/api/deploy', requireAuth, async (req, res) => {
           if (cheapest) {
             regionConfig.cpuPlatform = cheapest.platform;
             regionConfig.cpuPreset = cheapest.preset;
-            console.log(`[Deploy] Auto-detected cheapest CPU in ${region}: ${cheapest.platform} / ${cheapest.preset} (${cheapestVcpu} vCPUs)`);
+            eventLog.info('DEPLOY', 'Auto-detected cheapest CPU', { region, platform: cheapest.platform, preset: cheapest.preset, vcpu: cheapestVcpu });
           }
         }
       } catch (err) {
-        console.log(`CPU platform detection failed for ${region}, using default: ${err.message.split('\n')[0]}`);
+        eventLog.warn('DEPLOY', 'CPU platform detection failed', { region, error: err.message.split('\n')[0] });
       }
     }
 
@@ -931,12 +1027,12 @@ app.post('/api/deploy', requireAuth, async (req, res) => {
 
     if (!registryId) {
       try {
-        console.log(`Creating container registry in ${region}...`);
+        eventLog.info('DEPLOY', 'Creating container registry', { region });
         const regResult = nebius(
           `registry create --name openclaw --parent-id ${projectId} --format json`
         );
         registryId = JSON.parse(regResult).metadata.id;
-        console.log(`Created registry ${registryId}`);
+        eventLog.info('DEPLOY', 'Container registry created', { registryId, region });
       } catch (err) {
         return res.status(500).json({
           error: `Failed to create registry in ${region}: ${err.message.split('\n')[0]}`
@@ -969,12 +1065,12 @@ app.post('/api/deploy', requireAuth, async (req, res) => {
           // Image not in user's registry — fall back to public GHCR image
           const ghcrImage = GHCR_IMAGES[imageType];
           if (ghcrImage) {
-            console.log(`[Deploy] Image not in registry, using public GHCR: ${ghcrImage}`);
+            eventLog.info('DEPLOY', 'Image not in registry, falling back to public GHCR', { ghcrImage });
             image = ghcrImage;
           }
         }
       } catch (e) {
-        console.warn(`[Deploy] Image check skipped: ${e.message.split('\n')[0]}`);
+        eventLog.warn('DEPLOY', 'Image registry check skipped', { error: e.message.split('\n')[0] });
       }
     }
 
@@ -1041,14 +1137,14 @@ app.post('/api/deploy', requireAuth, async (req, res) => {
 
     // Store the dashboard password keyed by endpoint name
     storePassword(name, webPassword);
-    console.log(`[Deploy] Stored dashboard password for "${name}" (${webPassword.length} chars)`);
+    eventLog.info('DEPLOY', 'Deploy queued', { name, region, image, platform: regionConfig.cpuPlatform, preset: regionConfig.cpuPreset });
 
     // Run async so we don't block
     exec(`nebius ${cmd}`, { timeout: 120000 }, (err, stdout, stderr) => {
       if (err) {
-        console.error(`Deploy error (${region}):`, stderr || err.message);
+        eventLog.error('DEPLOY', 'Async deploy failed', { region, name, error: stderr || err.message });
       } else {
-        console.log(`Deploy success (${region}):`, stdout);
+        eventLog.info('DEPLOY', 'Async deploy succeeded', { region, name });
       }
     });
 
@@ -1075,7 +1171,7 @@ app.delete('/api/endpoints/:id', requireAuth, (req, res) => {
   try {
     const id = validateId(req.params.id);
     exec(`nebius ai endpoint delete --id ${id}`, { timeout: 60000 }, (err) => {
-      if (err) console.error('Delete error:', err.message);
+      if (err) eventLog.error('DEPLOY', 'Endpoint delete failed', { id: req.params.id, error: err.message });
     });
     res.json({ status: 'deleting', id });
   } catch (err) {
@@ -1088,7 +1184,7 @@ app.post('/api/endpoints/:id/stop', requireAuth, (req, res) => {
   try {
     const id = validateId(req.params.id);
     exec(`nebius ai endpoint stop --id ${id}`, { timeout: 120000 }, (err) => {
-      if (err) console.error('Stop error:', err.message);
+      if (err) eventLog.error('DEPLOY', 'Endpoint stop failed', { error: err.message });
     });
     res.json({ status: 'stopping', id });
   } catch (err) {
@@ -1101,7 +1197,7 @@ app.post('/api/endpoints/:id/start', requireAuth, (req, res) => {
   try {
     const id = validateId(req.params.id);
     exec(`nebius ai endpoint start --id ${id}`, { timeout: 120000 }, (err) => {
-      if (err) console.error('Start error:', err.message);
+      if (err) eventLog.error('DEPLOY', 'Endpoint start failed', { error: err.message });
     });
     res.json({ status: 'starting', id });
   } catch (err) {
@@ -1146,7 +1242,7 @@ app.post('/api/tunnel', requireAuth, (req, res) => {
 
   const localPort = nextTunnelPort++;
 
-  console.log(`[Tunnel] Creating SSH tunnel 0.0.0.0:${localPort} → ${ip} (container:18789)`);
+  eventLog.info('TUNNEL', 'Creating SSH tunnel', { ip, localPort });
 
   // Step 1: Try to get dashboard token
   // First check our stored passwords (set during deploy), then SSH extract as fallback
@@ -1154,7 +1250,7 @@ app.post('/api/tunnel', requireAuth, (req, res) => {
 
   if (endpointName && endpointPasswords[endpointName]) {
     gatewayToken = endpointPasswords[endpointName];
-    console.log(`[Tunnel] Using stored OPENCLAW_WEB_PASSWORD for "${endpointName}" (${gatewayToken.length} chars)`);
+    eventLog.info('TUNNEL', 'Using stored dashboard password', { endpointName });
   } else {
     // Fallback: SSH in and extract token from multiple sources
     try {
@@ -1169,15 +1265,15 @@ app.post('/api/tunnel', requireAuth, (req, res) => {
         `  TOKEN=\\$(sudo docker exec \\$CID cat /home/openclaw/.openclaw/openclaw.json 2>/dev/null | python3 -c \\"import sys,json;d=json.load(sys.stdin);print(d.get('gateway',{}).get('auth',{}).get('token',''))\\" 2>/dev/null); ` +
         `fi; ` +
         `echo \\$TOKEN"`;
-      console.log(`[Tunnel] No stored password — fetching token via SSH from ${ip}...`);
+      eventLog.info('TUNNEL', 'Fetching gateway token via SSH', { ip });
       gatewayToken = execSync(tokenCmd, { timeout: 20000, encoding: 'utf-8' }).trim();
       if (gatewayToken) {
-        console.log(`[Tunnel] Got token via SSH (${gatewayToken.length} chars)`);
+        eventLog.info('TUNNEL', 'Gateway token retrieved via SSH', { ip });
       } else {
-        console.log(`[Tunnel] No gateway token found in container env`);
+        eventLog.warn('TUNNEL', 'No gateway token found in container env', { ip });
       }
     } catch (err) {
-      console.warn(`[Tunnel] Could not fetch gateway token: ${err.message}`);
+      eventLog.warn('TUNNEL', 'Could not fetch gateway token', { ip, error: err.message });
     }
   }
 
@@ -1204,12 +1300,12 @@ app.post('/api/tunnel', requireAuth, (req, res) => {
   ]);
 
   proc.on('close', (code) => {
-    console.log(`[Tunnel] Tunnel to ${ip}:${localPort} closed (code ${code})`);
+    eventLog.info('TUNNEL', 'SSH tunnel closed', { ip, localPort, code });
     delete activeTunnels[ip];
   });
 
   proc.on('error', (err) => {
-    console.error(`[Tunnel] Error for ${ip}:`, err.message);
+    eventLog.error('TUNNEL', 'SSH tunnel process error', { ip, error: err.message });
     delete activeTunnels[ip];
   });
 
@@ -1235,7 +1331,7 @@ app.post('/api/pair-approve', requireAuth, (req, res) => {
   const token = req.body.token || '';
   const sshKey = findSshKey();
 
-  console.log(`[Pairing] Auto-approving pairing for ${ip}...`);
+  eventLog.info('TUNNEL', 'Auto-approving device pairing', { ip });
 
   // Run approve in background with retries — the pairing request may arrive after a short delay
   const tokenFlag = token ? `--token ${token}` : '';
@@ -1248,9 +1344,9 @@ app.post('/api/pair-approve', requireAuth, (req, res) => {
 
   exec(approveCmd, { timeout: 30000, encoding: 'utf-8' }, (err, stdout, stderr) => {
     if (stdout && stdout.includes('Approved')) {
-      console.log(`[Pairing] ${stdout.trim()}`);
+      eventLog.info('TUNNEL', 'Device pairing approved', { ip, result: stdout.trim() });
     } else {
-      console.log(`[Pairing] Result for ${ip}: ${(stdout || stderr || err?.message || 'unknown').trim()}`);
+      eventLog.warn('TUNNEL', 'Device pairing result', { ip, result: (stdout || stderr || err?.message || 'unknown').trim() });
     }
   });
 
@@ -1267,7 +1363,7 @@ app.delete('/api/tunnel/:ip', requireAuth, (req, res) => {
   if (tunnel) {
     tunnel.proc.kill('SIGTERM');
     delete activeTunnels[ip];
-    console.log(`[Tunnel] Closed tunnel to ${ip}`);
+    eventLog.info('TUNNEL', 'Tunnel manually closed', { ip });
   }
   res.json({ status: 'closed' });
 });
@@ -1296,10 +1392,10 @@ wss.on('connection', (ws, req) => {
     return;
   }
 
-  console.log(`[Terminal] Connecting to ${ip}...`);
+  eventLog.info('TERMINAL', 'SSH terminal connecting', { ip });
 
   const sshKey = findSshKey();
-  console.log(`[Terminal] SSH key: ${sshKey}`);
+  eventLog.debug('TERMINAL', 'SSH key resolved', { sshKey });
 
   if (!sshKey) {
     ws.send(JSON.stringify({ type: 'error', data: 'No SSH key found. Check ~/.ssh/ for id_ed25519 or id_ed25519_vm.' }));
@@ -1343,7 +1439,7 @@ wss.on('connection', (ws, req) => {
   });
 
   sshProc.on('close', (code, signal) => {
-    console.log(`[Terminal] SSH to ${ip} closed (code ${code}, signal ${signal}, ws.readyState=${ws.readyState})`);
+    eventLog.info('TERMINAL', 'SSH process closed', { ip, code, signal });
     if (ws.readyState === WebSocket.OPEN) {
       const msg = code === 255
         ? 'SSH connection failed. The endpoint may not have SSH enabled, or the connection timed out.'
@@ -1356,7 +1452,7 @@ wss.on('connection', (ws, req) => {
   });
 
   sshProc.on('error', (err) => {
-    console.error(`[Terminal] SSH error for ${ip}:`, err.message);
+    eventLog.error('TERMINAL', 'SSH process error', { ip, error: err.message });
     if (ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: 'error', data: `SSH error: ${err.message}` }));
       ws.close();
@@ -1379,7 +1475,7 @@ wss.on('connection', (ws, req) => {
   });
 
   ws.on('close', () => {
-    console.log(`[Terminal] WebSocket closed for ${ip}`);
+    eventLog.info('TERMINAL', 'WebSocket closed', { ip });
     sshProc.kill('SIGTERM');
   });
 });
@@ -1411,7 +1507,7 @@ wssLogs.on('connection', (ws, req) => {
     }
   }
 
-  console.log(`[Logs] Streaming logs for ${endpointId}...`);
+  eventLog.info('TERMINAL', 'Log stream started', { endpointId });
   ws.send(JSON.stringify({ type: 'status', data: `Connecting to logs for ${endpointId}...\r\n` }));
 
   const args = ['ai', 'endpoint', 'logs', endpointId, '--follow', '--timestamps', '--tail', '100'];
@@ -1432,7 +1528,7 @@ wssLogs.on('connection', (ws, req) => {
   });
 
   logProc.on('close', (code) => {
-    console.log(`[Logs] Stream ended for ${endpointId} (code ${code})`);
+    eventLog.info('TERMINAL', 'Log stream ended', { endpointId, code });
     if (ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: 'exit', code }));
       ws.close();
@@ -1440,7 +1536,7 @@ wssLogs.on('connection', (ws, req) => {
   });
 
   logProc.on('error', (err) => {
-    console.error(`[Logs] Error for ${endpointId}:`, err.message);
+    eventLog.error('TERMINAL', 'Log stream error', { endpointId, error: err.message });
     if (ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: 'error', data: `Logs error: ${err.message}` }));
       ws.close();
@@ -1448,7 +1544,7 @@ wssLogs.on('connection', (ws, req) => {
   });
 
   ws.on('close', () => {
-    console.log(`[Logs] WebSocket closed for ${endpointId}`);
+    eventLog.info('TERMINAL', 'Log stream WebSocket closed', { endpointId });
     logProc.kill('SIGTERM');
   });
 });
@@ -1481,12 +1577,12 @@ async function refreshProxyCache() {
           }
         }
       } catch (e) {
-        console.log(`[Proxy] Skipping ${region} (${profile}): ${e.message.split('\n')[0]}`);
+        eventLog.warn('PROXY', 'Region skipped in proxy cache refresh', { region, error: e.message.split('\n')[0] });
       }
     }
-    console.log(`[Proxy] Cache refreshed: ${Object.keys(proxyEndpointCache).length} endpoints`);
+    eventLog.info('PROXY', 'Proxy cache refreshed', { endpointCount: Object.keys(proxyEndpointCache).length });
   } catch (e) {
-    console.error('[Proxy] Cache refresh error:', e.message);
+    eventLog.error('PROXY', 'Proxy cache refresh error', { error: e.message });
   }
 }
 
@@ -1531,7 +1627,7 @@ app.use('/proxy/:endpointName', (req, res) => {
   });
 
   proxyReq.on('error', (err) => {
-    console.error(`[Proxy] Error proxying to ${targetUrl}:`, err.message);
+    eventLog.error('PROXY', 'HTTP proxy error', { targetUrl, error: err.message });
     if (!res.headersSent) {
       res.status(502).json({ error: `Proxy error: ${err.message}` });
     }
@@ -1553,6 +1649,90 @@ app.get('/api/proxy-urls', requireAuth, (req, res) => {
     };
   }
   res.json(urls);
+});
+
+// ── Admin routes ───────────────────────────────────────────────────────────
+function requireAdmin(req, res, next) {
+  if (!ADMIN_ENABLED) return res.status(404).json({ error: 'Not found' });
+  if (!req.session?.isAdmin) return res.status(401).json({ error: 'Admin authentication required' });
+  next();
+}
+
+// POST /admin/api/auth
+app.post('/admin/api/auth', (req, res) => {
+  if (!ADMIN_ENABLED) return res.status(404).json({ error: 'Not found' });
+  if (!req.body.password || req.body.password !== ADMIN_PASSWORD) {
+    eventLog.warn('AUTH', 'Admin login failed');
+    return res.status(401).json({ error: 'Invalid admin password' });
+  }
+  req.session.isAdmin = true;
+  eventLog.info('AUTH', 'Admin login successful');
+  res.json({ ok: true });
+});
+
+// POST /admin/api/logout
+app.post('/admin/api/logout', (req, res) => {
+  req.session.isAdmin = false;
+  eventLog.info('AUTH', 'Admin logged out');
+  res.json({ ok: true });
+});
+
+// GET /admin/api/status
+app.get('/admin/api/status', requireAdmin, (req, res) => {
+  res.json({
+    authenticated: true,
+    summary: {
+      wssTerminalClients: wss.clients.size,
+      wssLogsClients: wssLogs.clients.size,
+      activeTunnels: Object.keys(activeTunnels).length,
+      proxyEndpoints: Object.keys(proxyEndpointCache).length,
+      eventBufferSize: eventBuffer.length,
+      uptime: Math.floor(process.uptime()),
+      recentDeploys: eventBuffer
+        .filter(e => e.category === 'DEPLOY' && e.message.startsWith('Deploy'))
+        .slice(-10).reverse(),
+    }
+  });
+});
+
+// GET /admin/api/events?level=&category=&search=&limit=200
+app.get('/admin/api/events', requireAdmin, (req, res) => {
+  const { level, category, search, limit = 200 } = req.query;
+  const cap = Math.min(parseInt(limit, 10) || 200, EVENT_BUFFER_SIZE);
+  let results = eventBuffer.slice();
+  if (level)    results = results.filter(e => e.level === level);
+  if (category) results = results.filter(e => e.category === category);
+  if (search) {
+    const q = search.toLowerCase();
+    results = results.filter(e =>
+      e.message.toLowerCase().includes(q) ||
+      JSON.stringify(e.context || '').toLowerCase().includes(q)
+    );
+  }
+  res.json(results.slice(-cap).reverse()); // newest first
+});
+
+// GET /admin/api/stream  (SSE)
+app.get('/admin/api/stream', requireAdmin, (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+
+  // Replay full buffer to new client
+  for (const record of eventBuffer) res.write(`data: ${JSON.stringify(record)}\n\n`);
+
+  adminSseClients.add(res);
+  const heartbeat = setInterval(() => {
+    try { res.write(': ping\n\n'); } catch (_) {}
+  }, 25000);
+  req.on('close', () => { clearInterval(heartbeat); adminSseClients.delete(res); });
+});
+
+// GET /admin.html — serve admin panel
+app.get('/admin.html', (req, res) => {
+  if (!ADMIN_ENABLED) return res.status(404).send('Not found');
+  res.sendFile(path.join(__dirname, 'public', 'admin.html'));
 });
 
 // ── SPA fallback ───────────────────────────────────────────────────────────
@@ -1588,7 +1768,7 @@ server.on('upgrade', (request, socket, head) => {
     const proxyWss = new WebSocket.Server({ noServer: true, perMessageDeflate: false });
     proxyWss.handleUpgrade(request, socket, head, (clientWs) => {
       const targetUrl = `ws://${endpoint.ip}:18789`;
-      console.log(`[Proxy WS] Bridging to ${targetUrl}`);
+      eventLog.info('PROXY', 'WS proxy bridge initiated', { targetUrl });
 
       const targetWs = new WebSocket(targetUrl, {
         perMessageDeflate: false,
@@ -1599,7 +1779,7 @@ server.on('upgrade', (request, socket, head) => {
       });
 
       targetWs.on('open', () => {
-        console.log(`[Proxy WS] Connected to ${targetUrl}`);
+        eventLog.info('PROXY', 'WS proxy bridge connected', { targetUrl });
       });
 
       // Bridge: client → target
@@ -1620,7 +1800,7 @@ server.on('upgrade', (request, socket, head) => {
       targetWs.on('close', () => clientWs.close());
       clientWs.on('error', () => targetWs.close());
       targetWs.on('error', (err) => {
-        console.error(`[Proxy WS] Target error: ${err.message}`);
+        eventLog.error('PROXY', 'WS proxy target error', { error: err.message });
         clientWs.close();
       });
     });
@@ -1632,8 +1812,10 @@ server.on('upgrade', (request, socket, head) => {
 // ── Start server ───────────────────────────────────────────────────────────
 if (!IS_VERCEL) {
   server.listen(PORT, () => {
-    console.log(`\n  🦞 OpenClaw Deploy UI`);
-    console.log(`  http://localhost:${PORT}\n`);
+    process.stdout.write(`\n  🦞 OpenClaw Deploy UI\n  http://localhost:${PORT}\n`);
+    if (ADMIN_ENABLED) process.stdout.write(`  Admin panel: http://localhost:${PORT}/admin.html\n`);
+    process.stdout.write('\n');
+    eventLog.info('SYSTEM', 'Server started', { port: PORT, adminEnabled: ADMIN_ENABLED });
   });
 }
 
@@ -1642,19 +1824,19 @@ module.exports = app;
 
 // ── Graceful shutdown ──────────────────────────────────────────────────────
 function shutdown(signal) {
-  console.log(`\n  Received ${signal}, shutting down...`);
+  eventLog.info('SYSTEM', `Received ${signal}, shutting down...`);
 
   // Close all SSH tunnels
   for (const [ip, tunnel] of Object.entries(activeTunnels)) {
     tunnel.proc.kill('SIGTERM');
-    console.log(`  Closed tunnel to ${ip}`);
+    eventLog.info('SYSTEM', `Closed tunnel to ${ip}`);
   }
 
   // Close WebSocket connections
   wss.clients.forEach(ws => ws.close());
 
   server.close(() => {
-    console.log('  Server closed.');
+    eventLog.info('SYSTEM', 'Server closed');
     process.exit(0);
   });
 
