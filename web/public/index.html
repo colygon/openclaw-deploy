@@ -380,7 +380,16 @@
                     <span class="card-icon">&#x1F531;</span>
                     <span class="card-title">NemoClaw</span>
                   </button>
+                  <button class="select-card" data-build-type="custom" onclick="selectBuildType(this)">
+                    <span class="card-icon">&#x2699;</span>
+                    <span class="card-title">Custom</span>
+                  </button>
                 </div>
+              </div>
+              <div id="custom-repo-group" class="form-group hidden">
+                <label>GitHub Repository URL</label>
+                <input id="custom-repo-url" type="text" class="form-input" placeholder="https://github.com/user/repo" />
+                <small style="color:var(--text-muted);margin-top:4px;display:block">Enter a public GitHub repo containing a Dockerfile</small>
               </div>
               <div class="form-group">
                 <label>Target Region</label>

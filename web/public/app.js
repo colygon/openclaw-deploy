@@ -1230,6 +1230,12 @@ function selectBuildType(el) {
   el.closest('.build-type-cards').querySelectorAll('.select-card').forEach(c => c.classList.remove('selected'));
   el.classList.add('selected');
   selectedBuildType = el.dataset.buildType;
+  const customGroup = document.getElementById('custom-repo-group');
+  if (selectedBuildType === 'custom') {
+    customGroup.classList.remove('hidden');
+  } else {
+    customGroup.classList.add('hidden');
+  }
 }
 
 async function startBuild() {
@@ -1244,10 +1250,16 @@ async function startBuild() {
   logContent.textContent = 'Starting build...\n';
 
   try {
+    const buildPayload = { imageType: selectedBuildType, region };
+    if (selectedBuildType === 'custom') {
+      const repoUrl = document.getElementById('custom-repo-url').value.trim();
+      if (!repoUrl) throw new Error('Please enter a GitHub repository URL');
+      buildPayload.githubUrl = repoUrl;
+    }
     const res = await authFetch('/api/build', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ imageType: selectedBuildType, region })
+      body: JSON.stringify(buildPayload)
     });
 
     const data = await res.json();

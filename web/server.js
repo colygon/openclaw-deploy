@@ -720,9 +720,25 @@ const builds = new Map();
 app.post('/api/build', requireAuth, (req, res) => {
   if (IS_VERCEL) return res.json({ buildId: 'demo-build', status: 'running' });
 
-  const { imageType, region } = req.body;
+  const { imageType, region, githubUrl } = req.body;
   if (!imageType || !region) {
     return res.status(400).json({ error: 'imageType and region are required' });
+  }
+
+  if (imageType === 'custom' && !githubUrl) {
+    return res.status(400).json({ error: 'githubUrl is required for custom builds' });
+  }
+
+  // Validate GitHub URL for custom builds
+  if (imageType === 'custom') {
+    try {
+      const parsed = new URL(githubUrl);
+      if (parsed.hostname !== 'github.com') {
+        return res.status(400).json({ error: 'Only GitHub repository URLs are supported' });
+      }
+    } catch {
+      return res.status(400).json({ error: 'Invalid URL format' });
+    }
   }
 
   const regionConfig = REGIONS[region];
@@ -743,28 +759,69 @@ app.post('/api/build', requireAuth, (req, res) => {
   }
 
   const buildId = `build-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-  const imageName = imageType === 'nemoclaw' ? 'nemoclaw-serverless' : 'openclaw-serverless';
-  const imageUrl = `cr.${region}.nebius.cloud/${registryId}/${imageName}:latest`;
 
-  builds.set(buildId, { status: 'running', log: '', image: imageUrl, startedAt: Date.now() });
+  let imageName, buildCmd, env;
 
-  // Run build script asynchronously
-  const scriptPath = imageType === 'nemoclaw'
-    ? path.resolve(__dirname, '../install-nemoclaw-serverless.sh')
-    : path.resolve(__dirname, '../install-openclaw-serverless.sh');
+  if (imageType === 'custom') {
+    // Extract repo name from URL for image name
+    const repoPath = new URL(githubUrl).pathname.replace(/^\//, '').replace(/\.git$/, '');
+    imageName = repoPath.split('/').pop() || 'custom-image';
+    // Sanitize image name for Docker
+    imageName = imageName.toLowerCase().replace(/[^a-z0-9._-]/g, '-');
+    const imageUrl = `cr.${region}.nebius.cloud/${registryId}/${imageName}:latest`;
 
-  // Check if script exists, if not use inline Dockerfile
-  const buildCmd = fs.existsSync(scriptPath)
-    ? `bash "${scriptPath}" 2>&1`
-    : `echo "Build script not found: ${scriptPath}"`;
+    builds.set(buildId, { status: 'running', log: '', image: imageUrl, startedAt: Date.now() });
 
-  const env = {
-    ...process.env,
-    REGION: region,
-    PROJECT_ID: regionConfig.projectId || '',
-    TOKEN_FACTORY_API_KEY: 'placeholder', // Just for the build, not used at build time
-    SKIP_DEPLOY: '1' // We only want build+push, not endpoint creation
-  };
+    const tmpDir = `/tmp/custom-build-${buildId}`;
+    // Clone repo, find Dockerfile, build and push
+    buildCmd = `set -e
+echo "=== Cloning ${githubUrl} ==="
+git clone --depth 1 "${githubUrl}" "${tmpDir}" 2>&1
+cd "${tmpDir}"
+if [ ! -f Dockerfile ]; then
+  echo "ERROR: No Dockerfile found in repository root"
+  ls -la
+  exit 1
+fi
+echo "=== Found Dockerfile ==="
+echo "=== Authenticating with registry ==="
+nebius container registry configure-docker --profile ${regionConfig.profile} 2>&1 || true
+echo "=== Building Docker image ==="
+docker build -t "${imageUrl}" . 2>&1
+echo "=== Pushing image to registry ==="
+docker push "${imageUrl}" 2>&1
+echo "=== Cleaning up ==="
+rm -rf "${tmpDir}"
+echo "=== Done ==="`;
+
+    env = { ...process.env };
+    res.json({ buildId, status: 'running', image: imageUrl });
+  } else {
+    imageName = imageType === 'nemoclaw' ? 'nemoclaw-serverless' : 'openclaw-serverless';
+    const imageUrl = `cr.${region}.nebius.cloud/${registryId}/${imageName}:latest`;
+
+    builds.set(buildId, { status: 'running', log: '', image: imageUrl, startedAt: Date.now() });
+
+    // Run build script asynchronously
+    const scriptPath = imageType === 'nemoclaw'
+      ? path.resolve(__dirname, '../install-nemoclaw-serverless.sh')
+      : path.resolve(__dirname, '../install-openclaw-serverless.sh');
+
+    // Check if script exists, if not use inline Dockerfile
+    buildCmd = fs.existsSync(scriptPath)
+      ? `bash "${scriptPath}" 2>&1`
+      : `echo "Build script not found: ${scriptPath}"`;
+
+    env = {
+      ...process.env,
+      REGION: region,
+      PROJECT_ID: regionConfig.projectId || '',
+      TOKEN_FACTORY_API_KEY: 'placeholder', // Just for the build, not used at build time
+      SKIP_DEPLOY: '1' // We only want build+push, not endpoint creation
+    };
+
+    res.json({ buildId, status: 'running', image: imageUrl });
+  }
 
   const buildProc = exec(buildCmd, { env, timeout: 600000 }, (err, stdout, stderr) => {
     const build = builds.get(buildId);
@@ -784,8 +841,6 @@ app.post('/api/build', requireAuth, (req, res) => {
     const build = builds.get(buildId);
     if (build) build.log += data.toString();
   });
-
-  res.json({ buildId, status: 'running', image: imageUrl });
 });
 
 app.get('/api/build/:id', requireAuth, (req, res) => {
