@@ -87,6 +87,7 @@ function emitEvent(level, category, message, context) {
   };
   if (eventBuffer.length >= EVENT_BUFFER_SIZE) eventBuffer.shift();
   eventBuffer.push(record);
+  if (level === 'error') trackError();
   const pfx = `[${category}]`;
   if (level === 'error')     console.error(pfx, message, record.context || '');
   else if (level === 'warn') console.warn(pfx, message, record.context || '');
@@ -106,6 +107,101 @@ const eventLog = {
   error: (cat, msg, ctx) => emitEvent('error', cat, msg, ctx),
 };
 
+// ── Analytics ────────────────────────────────────────────────────────────────
+const ANALYTICS_FILE = path.join(__dirname, 'data', 'analytics.json');
+const ANALYTICS_RETENTION_DAYS = 90;
+const analytics = { days: {} };
+
+function analyticsToday() { return new Date().toISOString().slice(0, 10); }
+
+function dayBucket(date) {
+  if (!analytics.days[date]) {
+    analytics.days[date] = {
+      visitors: [], _vSet: new Set(),
+      pageViews: 0, logins: 0, loginFails: 0, deploys: 0, errors: 0,
+      deploysByAgent: {}, deploysByRegion: {}, deploysByPlatform: {},
+      pages: {}, browsers: {},
+    };
+  }
+  return analytics.days[date];
+}
+
+function hashVisitor(ip) {
+  return crypto.createHash('sha256')
+    .update(`${ip}:${analyticsToday()}:${SESSION_SECRET}`)
+    .digest('hex').slice(0, 12);
+}
+
+function parseBrowser(ua) {
+  if (!ua) return 'other';
+  if (/Edg\//.test(ua))   return 'edge';
+  if (/Chrome\//.test(ua)) return 'chrome';
+  if (/Firefox\//.test(ua)) return 'firefox';
+  if (/Safari\//.test(ua))  return 'safari';
+  return 'other';
+}
+
+function trackPageView(req) {
+  const day = dayBucket(analyticsToday());
+  const hash = hashVisitor(req.ip || req.connection?.remoteAddress || '?');
+  day.pageViews++;
+  if (!day._vSet.has(hash)) { day._vSet.add(hash); day.visitors.push(hash); }
+  const pg = req.path.replace(/\?.*/,'');
+  day.pages[pg] = (day.pages[pg] || 0) + 1;
+  day.browsers[parseBrowser(req.headers['user-agent'])] =
+    (day.browsers[parseBrowser(req.headers['user-agent'])] || 0) + 1;
+}
+
+function trackLogin(ok)  { const d = dayBucket(analyticsToday()); ok ? d.logins++ : d.loginFails++; }
+function trackError()    { dayBucket(analyticsToday()).errors++; }
+function trackDeploy(imageType, region, platform) {
+  const d = dayBucket(analyticsToday());
+  d.deploys++;
+  d.deploysByAgent[imageType]  = (d.deploysByAgent[imageType]  || 0) + 1;
+  d.deploysByRegion[region]    = (d.deploysByRegion[region]    || 0) + 1;
+  d.deploysByPlatform[platform]= (d.deploysByPlatform[platform]|| 0) + 1;
+}
+
+function loadAnalytics() {
+  try {
+    if (fs.existsSync(ANALYTICS_FILE)) {
+      const data = JSON.parse(fs.readFileSync(ANALYTICS_FILE, 'utf-8'));
+      analytics.days = data.days || {};
+      for (const day of Object.values(analytics.days)) {
+        day._vSet = new Set(day.visitors || []);
+      }
+      eventLog.info('SYSTEM', 'Analytics loaded', { days: Object.keys(analytics.days).length });
+    }
+  } catch (e) {
+    eventLog.warn('SYSTEM', 'Failed to load analytics', { error: e.message });
+  }
+}
+
+function saveAnalytics() {
+  try {
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - ANALYTICS_RETENTION_DAYS);
+    const cutoffStr = cutoff.toISOString().slice(0, 10);
+    for (const date of Object.keys(analytics.days)) {
+      if (date < cutoffStr) delete analytics.days[date];
+    }
+    const out = { days: {} };
+    for (const [date, day] of Object.entries(analytics.days)) {
+      const { _vSet, ...rest } = day;
+      out.days[date] = rest;
+    }
+    fs.mkdirSync(path.dirname(ANALYTICS_FILE), { recursive: true });
+    fs.writeFileSync(ANALYTICS_FILE, JSON.stringify(out));
+  } catch (e) {
+    eventLog.warn('SYSTEM', 'Failed to save analytics', { error: e.message });
+  }
+}
+
+if (!IS_VERCEL) {
+  loadAnalytics();
+  setInterval(saveAnalytics, 60000);
+}
+
 // ── Per-request API logging (debug level, skipped on Vercel) ───────────────
 if (!IS_VERCEL) {
   app.use((req, res, next) => {
@@ -119,6 +215,15 @@ if (!IS_VERCEL) {
         session: req.session?.authenticated ? 'auth' : 'anon',
       });
     });
+    next();
+  });
+
+  // Analytics: track page views (skip static assets and admin SSE)
+  app.use((req, res, next) => {
+    if (/\.(js|css|ico|png|svg|woff2?|map|json)$/i.test(req.path) ||
+        req.path === '/health' ||
+        req.path.startsWith('/admin/api/')) return next();
+    trackPageView(req);
     next();
   });
 }
@@ -389,8 +494,10 @@ app.get('/api/auth/status', (req, res) => {
       } catch (e) {}
 
       eventLog.info('AUTH', 'Session authenticated', { user });
+      trackLogin(true);
       res.json({ authenticated: true, user });
     } else {
+      trackLogin(false);
       res.json({ authenticated: false });
     }
   } catch (err) {
@@ -877,6 +984,7 @@ app.post('/api/deploy', requireAuth, async (req, res) => {
 
   const name = endpointName || `${imageType}-${region}-${Date.now().toString(36)}`;
   eventLog.info('DEPLOY', 'Deploy request received', { imageType, model, region, platform, provider, name });
+  trackDeploy(imageType, region, platform);
 
   try {
     // Find or create project for this region
@@ -1729,6 +1837,27 @@ app.get('/admin/api/stream', requireAdmin, (req, res) => {
   req.on('close', () => { clearInterval(heartbeat); adminSseClients.delete(res); });
 });
 
+// GET /admin/api/analytics
+app.get('/admin/api/analytics', requireAdmin, (req, res) => {
+  const range = Math.min(parseInt(req.query.days, 10) || 30, ANALYTICS_RETENTION_DAYS);
+  const result = {};
+  const now = new Date();
+  for (let i = 0; i < range; i++) {
+    const d = new Date(now); d.setDate(d.getDate() - i);
+    const ds = d.toISOString().slice(0, 10);
+    const day = analytics.days[ds];
+    if (day) {
+      const { _vSet, visitors, ...rest } = day;
+      result[ds] = { ...rest, uniqueVisitors: (visitors || []).length };
+    } else {
+      result[ds] = { pageViews: 0, uniqueVisitors: 0, logins: 0, loginFails: 0,
+        deploys: 0, errors: 0, deploysByAgent: {}, deploysByRegion: {},
+        deploysByPlatform: {}, pages: {}, browsers: {} };
+    }
+  }
+  res.json(result);
+});
+
 // GET /admin.html — serve admin panel
 app.get('/admin.html', (req, res) => {
   if (!ADMIN_ENABLED) return res.status(404).send('Not found');
@@ -1825,6 +1954,7 @@ module.exports = app;
 // ── Graceful shutdown ──────────────────────────────────────────────────────
 function shutdown(signal) {
   eventLog.info('SYSTEM', `Received ${signal}, shutting down...`);
+  saveAnalytics();
 
   // Close all SSH tunnels
   for (const [ip, tunnel] of Object.entries(activeTunnels)) {
