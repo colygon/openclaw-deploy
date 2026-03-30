@@ -1305,9 +1305,9 @@ app.post('/api/deploy', requireAuth, async (req, res) => {
     // Run async so we don't block
     exec(`nebius ${cmd}`, { timeout: 120000 }, (err, stdout, stderr) => {
       if (err) {
-        eventLog.error('DEPLOY', 'Async deploy failed', { region, name, error: stderr || err.message });
+        eventLog.error('DEPLOY', 'Deploy failed', { region, name, error: stderr || err.message });
       } else {
-        eventLog.info('DEPLOY', 'Async deploy succeeded', { region, name });
+        eventLog.info('DEPLOY', 'Deploy succeeded', { region, name });
       }
     });
 
@@ -1852,7 +1852,7 @@ app.get('/admin/api/status', requireAdmin, (req, res) => {
       eventBufferSize: eventBuffer.length,
       uptime: Math.floor(process.uptime()),
       recentDeploys: eventBuffer
-        .filter(e => e.category === 'DEPLOY' && e.message.startsWith('Deploy'))
+        .filter(e => e.category === 'DEPLOY')
         .slice(-10).reverse(),
     }
   });

@@ -589,7 +589,8 @@
     eventFeed.innerHTML = '';
     state.domRowCount = 0;
 
-    const toShow = state.events.filter(matchesFilter).slice(0, state.MAX_DOM_ROWS);
+    // Show newest first — reverse the filtered events
+    const toShow = state.events.filter(matchesFilter).slice(-state.MAX_DOM_ROWS).reverse();
     for (const ev of toShow) {
       const row = createEventRow(ev);
       eventFeed.appendChild(row);
