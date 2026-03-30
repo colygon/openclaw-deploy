@@ -1103,6 +1103,48 @@ input::placeholder { color: #555566; }
 }
 .form-hint a:hover { text-decoration: underline; }
 
+/* ── Deploy Summary Grid ──────────────────────────────────────────── */
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 0.6rem;
+  margin-bottom: 1rem;
+}
+.summary-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.8rem 1rem;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.summary-card:hover {
+  border-color: var(--accent);
+  background: var(--bg-card-hover);
+}
+.summary-card .sc-icon { font-size: 1.3rem; margin-bottom: 0.2rem; }
+.summary-card .sc-label {
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+  margin-bottom: 0.15rem;
+}
+.summary-card .sc-value {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-bright);
+}
+
+#customize-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 1.5rem;
+  font-size: 0.8rem;
+}
+
 /* ── Step Hint ────────────────────────────────────────────────────── */
 .step-hint {
   font-size: 0.8rem;

@@ -701,6 +701,96 @@ function getActiveApiKey() {
   }
 }
 
+// ── Deploy Summary / Customize Toggle ──────────────────────────────────────
+let customizeMode = false;
+
+function buildSummaryGrid() {
+  const grid = document.getElementById('summary-grid');
+  if (!grid) return;
+
+  const cards = [];
+
+  // Agent
+  if (state.selectedImage) {
+    const imgCard = document.querySelector(`#image-cards .select-card[data-key="${state.selectedImage}"]`);
+    const icon = imgCard?.querySelector('.card-icon')?.textContent || '🤖';
+    const name = imgCard?.querySelector('.card-title')?.textContent || state.selectedImage;
+    cards.push({ label: 'Agent', icon, value: name, step: 'image' });
+  }
+
+  // Model
+  if (state.selectedModel) {
+    const fm = FEATURED_MODELS[state.selectedModel];
+    const icon = fm?.icon || '🧠';
+    const name = fm?.name || state.selectedModel.split('/').pop();
+    cards.push({ label: 'Model', icon, value: name, step: 'model' });
+  }
+
+  // Region
+  if (state.selectedRegion) {
+    const regCard = document.querySelector(`#region-cards .select-card[data-key="${state.selectedRegion}"]`);
+    const icon = regCard?.querySelector('.card-icon')?.textContent || '🌍';
+    const name = regCard?.querySelector('.card-title')?.textContent || state.selectedRegion;
+    cards.push({ label: 'Region', icon, value: name, step: 'region' });
+  }
+
+  // Platform
+  if (state.selectedPlatform) {
+    const p = PLATFORMS[state.selectedPlatform];
+    cards.push({ label: 'Platform', icon: p?.icon || '⚡', value: p?.name || state.selectedPlatform, step: 'platform' });
+  }
+
+  // Provider (only for CPU)
+  if (state.selectedProvider && !isGpuSelected()) {
+    const pr = PROVIDERS[state.selectedProvider];
+    cards.push({ label: 'Provider', icon: pr?.icon || '🏭', value: pr?.name || state.selectedProvider, step: 'provider' });
+  }
+
+  grid.innerHTML = cards.map(c => `
+    <div class="summary-card" onclick="openCustomizeStep('${c.step}')">
+      <div class="sc-icon">${esc(c.icon)}</div>
+      <div class="sc-label">${esc(c.label)}</div>
+      <div class="sc-value">${esc(c.value)}</div>
+    </div>
+  `).join('');
+}
+
+function toggleCustomize() {
+  customizeMode = !customizeMode;
+  const steps = document.getElementById('deploy-steps');
+  const summary = document.getElementById('deploy-summary');
+  const btn = document.getElementById('customize-btn');
+
+  if (customizeMode) {
+    steps.classList.remove('hidden');
+    summary.classList.add('hidden');
+  } else {
+    steps.classList.add('hidden');
+    summary.classList.remove('hidden');
+    buildSummaryGrid();
+  }
+}
+
+function openCustomizeStep(step) {
+  // Open customize mode
+  customizeMode = true;
+  document.getElementById('deploy-steps').classList.remove('hidden');
+  document.getElementById('deploy-summary').classList.add('hidden');
+
+  // Scroll to the relevant step
+  const stepMap = {
+    image: '#image-cards',
+    model: '#model-cards',
+    region: '#region-cards',
+    platform: '#platform-cards',
+    provider: '#provider-cards'
+  };
+  const target = document.querySelector(stepMap[step]);
+  if (target) {
+    target.closest('.step')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+}
+
 // ── MysteryBox ──────────────────────────────────────────────────────────────
 let mysteryBoxSecrets = []; // cached secrets
 
@@ -852,6 +942,8 @@ function updateDeployButton() {
   const baseReady = !!(state.selectedImage && state.selectedModel && state.selectedRegion);
   const platformReady = state.selectedPlatform !== 'custom' || !!state.customPlatformValue;
   btn.disabled = !(baseReady && platformReady);
+  // Update the summary grid when not in customize mode
+  if (!customizeMode) buildSummaryGrid();
 }
 
 // Listen for API key input on any provider key field
