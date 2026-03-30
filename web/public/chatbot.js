@@ -17,7 +17,7 @@ let cs = null; // current chat session
 // ── Public entry point ─────────────────────────────────────────────────────
 
 function initChat() {
-  if (cs?.active) return; // preserve in-progress conversation
+  if (cs?.active) return;
   cs = {
     active: true,
     step: null,
@@ -36,8 +36,10 @@ function initChat() {
   if (feed) feed.innerHTML = '';
   setInputMode(false);
 
-  botMsg("Hey! I'm your OpenClaw deploy assistant 🦞\n\nI'll walk you through deploying an AI agent on Nebius Cloud — tap an option or type its number.\n\nWhat type of agent do you want to deploy?");
-  loadAndShowAgents();
+  (async () => {
+    await botMsg("Hey! I'm your OpenClaw deploy assistant 🦞\n\nI'll walk you through deploying an AI agent on Nebius Cloud — tap an option or type its number.\n\nWhat type of agent do you want to deploy?");
+    await loadAndShowAgents();
+  })();
 }
 
 function resetChat() {
@@ -156,22 +158,22 @@ async function loadAndShowAgents() {
     ];
   }
   cs.step = 'agent';
-  showOptions(imageOptions, opt => {
+  showOptions(imageOptions, async (opt) => {
     userMsg(`${opt.num} — ${opt.label.replace(/^\S+\s/, '')}`);
     cs.imageType = opt.id;
     cs.imageName = opt.name || opt.label.replace(/^\S+\s/, '');
     if (opt.id === 'custom') {
-      botMsg('What\'s the Docker image URL for your agent?');
+      await botMsg('What\'s the Docker image URL for your agent?');
       setInputMode(true, 'docker.io/myuser/myagent:latest');
       cs.step = 'custom_image';
     } else {
-      botMsg(`${opt.label.split(' ')[0]} ${opt.label.split(' ').slice(1).join(' ')} — great choice!\n\nWhat model should power it?`);
-      stepModel();
+      await botMsg(`${opt.icon || '✓'} ${cs.imageName} — great choice!\n\nWhat model should power it?`);
+      await stepModel();
     }
   });
 }
 
-function stepModel() {
+async function stepModel() {
   cs.step = 'model';
   const opts = [
     ...CHAT_FEATURED_MODELS.map((m, i) => ({
@@ -179,17 +181,17 @@ function stepModel() {
     })),
     { num: CHAT_FEATURED_MODELS.length + 1, id: '_browse', label: '📋 Browse all models', desc: 'Fetch the full Token Factory list' },
   ];
-  showOptions(opts, opt => {
+  showOptions(opts, async (opt) => {
     userMsg(`${opt.num} — ${opt.label.replace(/^\S+\s/, '')}`);
     if (opt.id === '_browse') {
-      botMsg('Fetching all available models…');
-      stepModelBrowse();
+      await botMsg('Fetching all available models…');
+      await stepModelBrowse();
       return;
     }
     cs.model = opt.id;
     cs.modelName = opt.name;
-    botMsg(`${opt.name} it is! Which region do you want to deploy to?`);
-    stepRegion();
+    await botMsg(`${opt.name} it is! Which region do you want to deploy to?`);
+    await stepRegion();
   });
 }
 
@@ -204,12 +206,12 @@ async function stepModelBrowse() {
     const models = await res.json();
     hideTyping();
     if (!Array.isArray(models) || models.length === 0) {
-      botMsg('No models found — falling back to featured models.');
-      stepModel(); return;
+      await botMsg('No models found — falling back to featured models.');
+      await stepModel(); return;
     }
     const PAGE = 20;
     const slice = models.slice(0, PAGE);
-    botMsg(`Here are the first ${slice.length} available models:`);
+    await botMsg(`Here are the first ${slice.length} available models:`);
     cs.step = 'model_browse';
     showOptions(slice.map((m, i) => ({
       num: i + 1,
@@ -217,17 +219,17 @@ async function stepModelBrowse() {
       name: m.id.split('/').pop(),
       label: m.id.split('/').pop(),
       desc: m.owned_by || '',
-    })), opt => {
+    })), async (opt) => {
       userMsg(`${opt.num} — ${opt.name}`);
       cs.model = opt.id;
       cs.modelName = opt.name;
-      botMsg(`${opt.name} — perfect! Which region do you want to deploy to?`);
-      stepRegion();
+      await botMsg(`${opt.name} — perfect! Which region do you want to deploy to?`);
+      await stepRegion();
     });
   } catch (_) {
     hideTyping();
-    botMsg('Couldn\'t fetch models. Let\'s use the featured ones.');
-    stepModel();
+    await botMsg('Couldn\'t fetch models. Let\'s use the featured ones.');
+    await stepModel();
   }
 }
 
@@ -245,34 +247,34 @@ async function stepRegion() {
   } catch (_) {
     regionOpts = [{ num: 1, id: 'eu-north1', name: 'EU North (Finland)', label: '🇫🇮 EU North (Finland)' }];
   }
-  showOptions(regionOpts, opt => {
+  showOptions(regionOpts, async (opt) => {
     userMsg(`${opt.num} — ${opt.name}`);
     cs.region = opt.id;
     cs.regionName = opt.name;
-    botMsg(`${opt.label} — got it! How should the agent run?`);
-    stepPlatform();
+    await botMsg(`${opt.label} — got it! How should the agent run?`);
+    await stepPlatform();
   });
 }
 
-function stepPlatform() {
+async function stepPlatform() {
   cs.step = 'platform';
   showOptions([
     { num: 1, id: 'gpu', label: '⚡ GPU',      desc: 'Dedicated H200 VM — model runs locally, no API key needed' },
     { num: 2, id: 'cpu', label: '🖥️ CPU Only', desc: 'Serverless — fast cold start, uses your API provider' },
     { num: 3, id: 'custom', label: '⚙️ Custom', desc: 'Choose exact vCPUs, RAM and GPU model' },
-  ], opt => {
+  ], async (opt) => {
     userMsg(`${opt.num} — ${opt.label.replace(/^\S+\s/, '')}`);
     cs.platform = opt.id;
     cs.platformName = opt.label.replace(/^\S+\s/, '');
     if (opt.id === 'gpu') {
-      botMsg('GPU selected — no API key required. What should I name this endpoint?');
-      stepName();
+      await botMsg('GPU selected — no API key required. What should I name this endpoint?');
+      await stepName();
     } else if (opt.id === 'cpu') {
-      botMsg('Serverless CPU — which API provider should route inference?');
-      stepProvider();
+      await botMsg('Serverless CPU — which API provider should route inference?');
+      await stepProvider();
     } else {
-      botMsg('Let me fetch the available compute configurations for that region…');
-      stepPlatformCustom();
+      await botMsg('Let me fetch the available compute configurations for that region…');
+      await stepPlatformCustom();
     }
   });
 }
@@ -301,60 +303,60 @@ async function stepPlatformCustom() {
     }
 
     if (opts.length === 0) {
-      botMsg('No custom platforms available in this region. Falling back to CPU Only.');
+      await botMsg('No custom platforms available in this region. Falling back to CPU Only.');
       cs.platform = 'cpu'; cs.platformName = 'CPU Only';
-      stepProvider(); return;
+      await stepProvider(); return;
     }
 
-    botMsg('Choose a compute configuration:');
-    showOptions(opts, opt => {
+    await botMsg('Choose a compute configuration:');
+    showOptions(opts, async (opt) => {
       userMsg(`${opt.num} — ${opt.label}`);
       cs.platformPreset = opt.id;
       cs.platformPresetLabel = opt.label;
       if (opt.isGpu) {
-        botMsg('GPU configuration selected — no API key required. What should I name this endpoint?');
-        stepName();
+        await botMsg('GPU configuration selected — no API key required. What should I name this endpoint?');
+        await stepName();
       } else {
-        botMsg('Which API provider should route inference?');
-        stepProvider();
+        await botMsg('Which API provider should route inference?');
+        await stepProvider();
       }
     });
   } catch (_) {
     hideTyping();
-    botMsg('Couldn\'t load platform options — defaulting to CPU Only.');
+    await botMsg('Couldn\'t load platform options — defaulting to CPU Only.');
     cs.platform = 'cpu'; cs.platformName = 'CPU Only';
-    stepProvider();
+    await stepProvider();
   }
 }
 
-function stepProvider() {
+async function stepProvider() {
   cs.step = 'provider';
   showOptions(CHAT_PROVIDERS.map((p, i) => ({
     num: i + 1, id: p.id, name: p.name, hint: p.hint,
     label: `${p.icon} ${p.name}`, desc: p.desc,
-  })), opt => {
+  })), async (opt) => {
     userMsg(`${opt.num} — ${opt.name}`);
     cs.provider = opt.id;
     cs.providerName = opt.name;
     cs.providerHint = opt.hint;
-    botMsg(`${opt.name} — enter your API key below, or tap a saved key from MysteryBox:`);
-    stepApiKey();
+    await botMsg(`${opt.name} — enter your API key below, or tap a saved key from MysteryBox:`);
+    await stepApiKey();
   });
 }
 
-function stepApiKey() {
+async function stepApiKey() {
   cs.step = 'apikey';
-  loadAndShowMbSecrets();
+  await loadAndShowMbSecrets();
   setInputMode(true, cs.providerHint || 'Paste API key…');
 }
 
-function stepName() {
+async function stepName() {
   cs.step = 'name';
-  botMsg('What should I name this endpoint? Press Enter to auto-generate.');
+  await botMsg('What should I name this endpoint? Press Enter to auto-generate.');
   setInputMode(true, 'my-agent  (leave blank to auto-generate)');
 }
 
-function stepConfirm() {
+async function stepConfirm() {
   cs.step = 'confirm';
   const isGpu = cs.platform === 'gpu' ||
     (cs.platform === 'custom' && cs.platformPreset?.startsWith('gpu-'));
@@ -370,20 +372,20 @@ function stepConfirm() {
     `\nReady to deploy?`,
   ].filter(Boolean);
 
-  botMsg(lines.join('\n'));
+  await botMsg(lines.join('\n'));
   showOptions([
     { num: 1, id: 'deploy',   label: '🚀 Deploy now' },
     { num: 2, id: 'restart',  label: '🔄 Start over' },
-  ], opt => {
+  ], async (opt) => {
     userMsg(opt.num === 1 ? '1 — Deploy now' : '2 — Start over');
     if (opt.id === 'restart') { setTimeout(resetChat, 300); return; }
-    stepDeploy();
+    await stepDeploy();
   });
 }
 
 async function stepDeploy() {
   cs.step = 'deploying';
-  botMsg('Deploying your endpoint… 🚀');
+  await botMsg('Deploying your endpoint… 🚀');
   showTyping();
 
   const isGpu = cs.platform === 'gpu' ||
@@ -411,30 +413,30 @@ async function stepDeploy() {
     hideTyping();
 
     if (res.ok) {
-      botMsg(`Your endpoint is being created! 🎉\n\n📌 Name: ${data.name}\n📦 Image: ${data.image}\n\nRefresh Endpoints in ~60 seconds to see it running.`);
+      await botMsg(`Your endpoint is being created! 🎉\n\n📌 Name: ${data.name}\n📦 Image: ${data.image}\n\nRefresh Endpoints in ~60 seconds to see it running.`);
       showOptions([
         { num: 1, id: 'endpoints', label: '📡 View Endpoints' },
         { num: 2, id: 'again',     label: '🦞 Deploy another agent' },
-      ], opt => {
+      ], (opt) => {
         userMsg(opt.num === 1 ? '1 — View Endpoints' : '2 — Deploy another');
         if (opt.id === 'endpoints') { switchPage('endpoints'); }
         else { setTimeout(resetChat, 300); }
       });
       loadEndpoints();
     } else {
-      botMsg(`Deployment failed: ${data.error || 'Unknown error'}\n\nWant to retry?`);
+      await botMsg(`Deployment failed: ${data.error || 'Unknown error'}\n\nWant to retry?`);
       showOptions([
         { num: 1, id: 'retry',   label: '🔄 Retry' },
         { num: 2, id: 'restart', label: '↩️ Start over' },
-      ], opt => {
+      ], async (opt) => {
         userMsg(opt.num === 1 ? '1 — Retry' : '2 — Start over');
-        if (opt.id === 'retry') stepConfirm();
+        if (opt.id === 'retry') await stepConfirm();
         else setTimeout(resetChat, 300);
       });
     }
   } catch (e) {
     hideTyping();
-    botMsg(`Network error: ${e.message}`);
+    await botMsg(`Network error: ${e.message}`);
   }
 }
 
@@ -462,28 +464,34 @@ function chatSend() {
       setInputMode(false);
       cs.customImage = text;
       cs.imageName   = 'Custom (' + text.split('/').pop() + ')';
-      botMsg('What model should power your agent?');
-      stepModel();
+      (async () => {
+        await botMsg('What model should power your agent?');
+        await stepModel();
+      })();
       break;
 
     case 'apikey':
       if (!text) return;
-      userMsg('••••••••');        // don't echo key verbatim
+      userMsg('••••••••');
       setInputMode(false);
       clearMbRow();
       cs.apiKey = text;
-      botMsg('API key saved! What should I name this endpoint?');
-      stepName();
+      (async () => {
+        await botMsg('API key saved! What should I name this endpoint?');
+        await stepName();
+      })();
       break;
 
     case 'name':
       userMsg(text || '(auto-generate)');
       setInputMode(false);
       cs.endpointName = text;
-      botMsg(text
-        ? `Endpoint name set to "${text}". Let me show you the summary.`
-        : 'Name will be auto-generated. Let me show you the summary.');
-      stepConfirm();
+      (async () => {
+        await botMsg(text
+          ? `Endpoint name set to "${text}". Let me show you the summary.`
+          : 'Name will be auto-generated. Let me show you the summary.');
+        await stepConfirm();
+      })();
       break;
   }
 }
@@ -529,8 +537,8 @@ async function loadAndShowMbSecrets() {
         clearMbRow();
         setInputMode(false);
         userMsg(`🔐 ${s.name || s.id} (from MysteryBox)`);
-        botMsg('API key loaded! What should I name this endpoint?');
-        stepName();
+        await botMsg('API key loaded! What should I name this endpoint?');
+        await stepName();
       } catch (_) {
         btn.textContent = 'error';
       }
