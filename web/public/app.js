@@ -288,10 +288,14 @@ async function loadImages() {
       const card = document.createElement('div');
       card.className = 'select-card';
       card.dataset.key = key;
+      const sourceHtml = img.sourceUrl
+        ? `<div class="card-source">${esc(img.sourceUrl)}</div>`
+        : '';
       card.innerHTML = `
         <div class="card-icon">${esc(img.icon)}</div>
         <div class="card-title">${esc(img.name)}</div>
         <div class="card-desc">${esc(img.description)}</div>
+        ${sourceHtml}
       `;
       card.onclick = () => selectImage(key);
       grid.appendChild(card);

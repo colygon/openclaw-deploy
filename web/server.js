@@ -642,7 +642,15 @@ app.get('/api/regions', (req, res) => {
 
 app.get('/api/images', (req, res) => {
   res.json(Object.fromEntries(
-    Object.entries(IMAGES).map(([k, v]) => [k, { name: v.name, description: v.description, icon: v.icon }])
+    Object.entries(IMAGES).map(([k, v]) => [k, {
+      name: v.name,
+      description: v.description,
+      icon: v.icon,
+      sourceUrl: GHCR_IMAGES[k] || null,
+      github: k === 'openclaw' ? 'https://github.com/AiChatBot/OpenClaw'
+            : k === 'nemoclaw' ? 'https://github.com/NVIDIA/NemoClaw'
+            : null
+    }])
   ));
 });
 
