@@ -188,7 +188,13 @@
 
               <!-- Custom image input (shown when Custom is selected) -->
               <div id="custom-image-input" class="custom-input hidden">
-                <label>Docker Image URL</label>
+                <div id="registry-image-picker" class="registry-image-picker">
+                  <label>Select from your registries</label>
+                  <div id="registry-image-list" class="registry-image-list">
+                    <div class="mb-loading"><span class="spinner"></span> Loading registry images...</div>
+                  </div>
+                </div>
+                <div class="custom-url-divider"><span>or enter a custom URL</span></div>
                 <input type="text" id="custom-image-url" placeholder="e.g. docker.io/myuser/myagent:latest" />
               </div>
             </section>

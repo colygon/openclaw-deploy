@@ -1047,6 +1047,82 @@ body {
   margin-bottom: 0.3rem;
 }
 
+/* ── Registry Image Picker (in Custom Image) ─────────────────────── */
+.registry-image-picker {
+  margin-bottom: 0.8rem;
+}
+.registry-image-picker label {
+  display: block;
+  font-size: 0.85rem;
+  color: var(--text-dim);
+  margin-bottom: 0.5rem;
+}
+.registry-image-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  max-height: 240px;
+  overflow-y: auto;
+}
+.reg-img-item {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.55rem 0.8rem;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+.reg-img-item:hover {
+  border-color: var(--accent);
+  background: var(--bg-card-hover);
+}
+.reg-img-item.selected {
+  border-color: var(--border-selected);
+  background: var(--bg-selected);
+}
+.reg-img-item .ri-icon { font-size: 1rem; flex-shrink: 0; }
+.reg-img-item .ri-name {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-bright);
+}
+.reg-img-item .ri-url {
+  font-size: 0.7rem;
+  color: var(--text-dim);
+  word-break: break-all;
+}
+.reg-img-item .ri-tags {
+  margin-left: auto;
+  display: flex;
+  gap: 0.3rem;
+  flex-shrink: 0;
+}
+.reg-img-item .ri-tag {
+  font-size: 0.65rem;
+  padding: 0.1rem 0.4rem;
+  background: rgba(99,102,241,0.12);
+  color: var(--accent);
+  border-radius: 3px;
+}
+.custom-url-divider {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  margin: 0.8rem 0;
+  color: var(--text-dim);
+  font-size: 0.75rem;
+}
+.custom-url-divider::before,
+.custom-url-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
 .custom-platform-picker {
   margin-top: 0.8rem;
 }

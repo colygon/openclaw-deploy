@@ -318,10 +318,80 @@ function selectImage(key) {
   const customInput = document.getElementById('custom-image-input');
   if (key === 'custom') {
     customInput.classList.remove('hidden');
+    loadRegistryImagesForPicker();
   } else {
     customInput.classList.add('hidden');
   }
 
+  updateDeployButton();
+}
+
+async function loadRegistryImagesForPicker() {
+  const list = document.getElementById('registry-image-list');
+  list.innerHTML = '<div class="mb-loading"><span class="spinner"></span> Loading registry images...</div>';
+
+  try {
+    // First load registries if we don't have them cached
+    if (registriesCache.length === 0) {
+      const regRes = await authFetch('/api/registries');
+      if (regRes.ok) registriesCache = await regRes.json();
+    }
+
+    if (registriesCache.length === 0) {
+      list.innerHTML = '<div class="text-dim" style="font-size:0.8rem;padding:0.5rem">No registries found. Build an image first.</div>';
+      return;
+    }
+
+    // Fetch images from all registries in parallel
+    const allImages = [];
+    await Promise.all(registriesCache.map(async (reg) => {
+      try {
+        const res = await authFetch(`/api/registries/${encodeURIComponent(reg.id)}/images?profile=${encodeURIComponent(reg.region)}`);
+        if (!res.ok) return;
+        const images = await res.json();
+        for (const img of images) {
+          const regId = reg.id.replace(/^registry-/, '');
+          const fullUrl = `cr.${reg.region}.nebius.cloud/${regId}/${img.name}`;
+          const taggedUrl = img.tags?.length ? `${fullUrl}:${img.tags[0]}` : `${fullUrl}:latest`;
+          allImages.push({
+            name: img.name,
+            url: taggedUrl,
+            tags: img.tags || [],
+            region: reg.region,
+            regionFlag: reg.regionFlag || '🌍',
+            regionName: reg.regionName
+          });
+        }
+      } catch (_) {}
+    }));
+
+    if (allImages.length === 0) {
+      list.innerHTML = '<div class="text-dim" style="font-size:0.8rem;padding:0.5rem">No images found in registries. Build one on the Docker Registry page.</div>';
+      return;
+    }
+
+    const currentUrl = document.getElementById('custom-image-url').value.trim();
+    list.innerHTML = allImages.map(img => `
+      <div class="reg-img-item${currentUrl === img.url ? ' selected' : ''}" onclick="selectRegistryImage(this, '${esc(img.url)}')">
+        <span class="ri-icon">${img.regionFlag}</span>
+        <div>
+          <div class="ri-name">${esc(img.name)}</div>
+          <div class="ri-url">${esc(img.url)}</div>
+        </div>
+        <div class="ri-tags">
+          ${img.tags.slice(0, 3).map(t => `<span class="ri-tag">${esc(t)}</span>`).join('')}
+        </div>
+      </div>
+    `).join('');
+  } catch (err) {
+    list.innerHTML = `<div class="text-dim" style="font-size:0.8rem;padding:0.5rem">Failed to load: ${esc(err.message)}</div>`;
+  }
+}
+
+function selectRegistryImage(el, url) {
+  document.getElementById('custom-image-url').value = url;
+  document.querySelectorAll('.reg-img-item').forEach(i => i.classList.remove('selected'));
+  el.classList.add('selected');
   updateDeployButton();
 }
 
