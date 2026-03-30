@@ -57,7 +57,7 @@
           </button>
           <button class="nav-item" data-page="registry" onclick="switchPage('registry')">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12H2"/><path d="M5.45 5.11L2 12v6a2 2 0 002 2h16a2 2 0 002-2v-6l-3.45-6.89A2 2 0 0016.76 4H7.24a2 2 0 00-1.79 1.11z"/><line x1="6" y1="16" x2="6.01" y2="16"/><line x1="10" y1="16" x2="10.01" y2="16"/></svg>
-            Registry
+            Docker Registry
           </button>
         </div>
 
@@ -105,7 +105,7 @@
               <div class="gs-step-num">1</div>
               <div class="gs-step-body">
                 <h3>Build a Docker image</h3>
-                <p>Head to the <strong>Registry</strong> page and click <strong>Build Image</strong>. Choose an agent type (OpenClaw or NemoClaw), pick a target region, then click <strong>Build &amp; Push</strong>. The build runs on your VM and pushes the image to your Nebius container registry — this takes a few minutes the first time.</p>
+                <p>Head to the <strong>Docker Registry</strong> page and click <strong>Build Image</strong>. Choose an agent type (OpenClaw or NemoClaw), pick a target region, then click <strong>Build &amp; Push</strong>. The build runs on your VM and pushes the image to your Nebius container registry — this takes a few minutes the first time.</p>
                 <ul class="gs-bullets">
                   <li>OpenClaw — general-purpose agent, runs on serverless CPU</li>
                   <li>NemoClaw — GPU-accelerated, runs on an H200 VM</li>
@@ -113,7 +113,7 @@
                 </ul>
                 <button class="btn btn-primary btn-sm gs-action" onclick="switchPage('registry'); showBuildDialog()">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12H2"/><path d="M5.45 5.11L2 12v6a2 2 0 002 2h16a2 2 0 002-2v-6l-3.45-6.89A2 2 0 0016.76 4H7.24a2 2 0 00-1.79 1.11z"/></svg>
-                  Go to Registry
+                  Go to Docker Registry
                 </button>
               </div>
             </div>
@@ -391,6 +391,17 @@
                 <input id="custom-repo-url" type="text" class="form-input" placeholder="https://github.com/user/repo" />
                 <small style="color:var(--text-muted);margin-top:4px;display:block">Enter a public GitHub repo containing a Dockerfile</small>
               </div>
+              <div id="build-source-viewer" class="form-group hidden">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+                  <label style="margin:0">Dockerfile</label>
+                  <a id="build-source-repo" href="#" target="_blank" style="font-size:11px;color:var(--accent)">View on GitHub ↗</a>
+                </div>
+                <pre id="build-source-code" style="background:var(--bg-inset);border:1px solid var(--border-color);border-radius:6px;padding:12px;font-size:11px;line-height:1.5;max-height:300px;overflow-y:auto;white-space:pre-wrap;word-break:break-all;color:var(--text-secondary);margin:0"></pre>
+                <details style="margin-top:6px">
+                  <summary style="font-size:11px;color:var(--text-muted);cursor:pointer">Entrypoint script</summary>
+                  <pre id="build-source-entrypoint" style="background:var(--bg-inset);border:1px solid var(--border-color);border-radius:6px;padding:12px;font-size:11px;line-height:1.5;max-height:300px;overflow-y:auto;white-space:pre-wrap;word-break:break-all;color:var(--text-secondary);margin-top:4px"></pre>
+                </details>
+              </div>
               <div class="form-group">
                 <label>Target Region</label>
                 <select id="build-region" class="form-select"></select>
@@ -433,7 +444,7 @@
       </button>
       <button class="dock-item" data-page="registry" onclick="switchPage('registry')">
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12H2"/><path d="M5.45 5.11L2 12v6a2 2 0 002 2h16a2 2 0 002-2v-6l-3.45-6.89A2 2 0 0016.76 4H7.24a2 2 0 00-1.79 1.11z"/><line x1="6" y1="16" x2="6.01" y2="16"/><line x1="10" y1="16" x2="10.01" y2="16"/></svg>
-        <span>Registry</span>
+        <span>Docker Registry</span>
       </button>
     </nav>
 

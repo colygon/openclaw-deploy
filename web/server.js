@@ -843,6 +843,38 @@ echo "=== Done ==="`;
   });
 });
 
+// Return Dockerfile source for a given build type
+app.get('/api/build/source/:type', requireAuth, (req, res) => {
+  const { type } = req.params;
+  if (type !== 'openclaw' && type !== 'nemoclaw') {
+    return res.status(400).json({ error: 'Unknown build type' });
+  }
+
+  const scriptPath = type === 'nemoclaw'
+    ? path.resolve(__dirname, '../install-nemoclaw-serverless.sh')
+    : path.resolve(__dirname, '../install-openclaw-serverless.sh');
+
+  try {
+    const script = fs.readFileSync(scriptPath, 'utf-8');
+
+    // Extract Dockerfile from heredoc: cat > ... << 'DOCKERFILE' ... DOCKERFILE
+    const dockerMatch = script.match(/cat > [^\n]*Dockerfile[^\n]*<<\s*'DOCKERFILE'\n([\s\S]*?)\nDOCKERFILE/);
+    const dockerfile = dockerMatch ? dockerMatch[1] : null;
+
+    // Extract entrypoint from heredoc: cat > ... << 'ENTRYPOINT' ... ENTRYPOINT
+    const entryMatch = script.match(/cat > [^\n]*entrypoint\.sh[^\n]*<<\s*'ENTRYPOINT'\n([\s\S]*?)\nENTRYPOINT/);
+    const entrypoint = entryMatch ? entryMatch[1] : null;
+
+    const repo = type === 'nemoclaw'
+      ? 'https://github.com/colygon/openclaw-deploy'
+      : 'https://github.com/colygon/openclaw-deploy';
+
+    res.json({ dockerfile, entrypoint, scriptPath: `install-${type}-serverless.sh`, repo });
+  } catch (e) {
+    res.status(500).json({ error: 'Could not read build script' });
+  }
+});
+
 app.get('/api/build/:id', requireAuth, (req, res) => {
   const build = builds.get(req.params.id);
   if (!build) return res.status(404).json({ error: 'Build not found' });

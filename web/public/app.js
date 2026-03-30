@@ -1219,6 +1219,11 @@ function showBuildDialog() {
       select.innerHTML = '<option value="eu-north1">EU North (Finland)</option>';
     }
   }
+
+  // Load source for the currently selected build type
+  if (selectedBuildType && selectedBuildType !== 'custom') {
+    loadBuildSource(selectedBuildType);
+  }
 }
 
 function hideBuildDialog() {
@@ -1231,10 +1236,36 @@ function selectBuildType(el) {
   el.classList.add('selected');
   selectedBuildType = el.dataset.buildType;
   const customGroup = document.getElementById('custom-repo-group');
+  const sourceViewer = document.getElementById('build-source-viewer');
   if (selectedBuildType === 'custom') {
     customGroup.classList.remove('hidden');
+    sourceViewer.classList.add('hidden');
   } else {
     customGroup.classList.add('hidden');
+    loadBuildSource(selectedBuildType);
+  }
+}
+
+async function loadBuildSource(type) {
+  const viewer = document.getElementById('build-source-viewer');
+  const codeEl = document.getElementById('build-source-code');
+  const entryEl = document.getElementById('build-source-entrypoint');
+  const repoLink = document.getElementById('build-source-repo');
+
+  codeEl.textContent = 'Loading...';
+  entryEl.textContent = '';
+  viewer.classList.remove('hidden');
+
+  try {
+    const res = await authFetch(`/api/build/source/${encodeURIComponent(type)}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error);
+    codeEl.textContent = data.dockerfile || 'Dockerfile not found in build script';
+    entryEl.textContent = data.entrypoint || 'No entrypoint script';
+    repoLink.href = data.repo || '#';
+    repoLink.textContent = `${data.scriptPath || 'Source'} on GitHub ↗`;
+  } catch (e) {
+    codeEl.textContent = `Error loading source: ${e.message}`;
   }
 }
 
