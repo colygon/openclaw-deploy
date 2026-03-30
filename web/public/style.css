@@ -97,6 +97,19 @@ body {
   margin-top: 1rem;
 }
 
+.demo-link {
+  display: inline-block;
+  margin-top: 1rem;
+  color: var(--text-dim);
+  font-size: 0.9rem;
+  text-decoration: none;
+  transition: color 0.2s;
+}
+
+.demo-link:hover {
+  color: var(--accent);
+}
+
 /* ── Buttons ──────────────────────────────────────────────────────── */
 .btn {
   display: inline-flex;

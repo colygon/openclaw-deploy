@@ -1,5 +1,6 @@
 const express = require('express');
 const session = require('express-session');
+const FileStore = require('session-file-store')(session);
 const crypto = require('crypto');
 const { execSync, exec, spawn } = require('child_process');
 const fs = require('fs');
@@ -38,12 +39,38 @@ const SESSION_SECRET = process.env.SESSION_SECRET || crypto.randomBytes(32).toSt
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
-app.use(session({
+
+// Ensure sessions directory exists for file-based persistence
+const sessionsDir = path.join(__dirname, 'data', 'sessions');
+if (!IS_VERCEL && !fs.existsSync(sessionsDir)) {
+  fs.mkdirSync(sessionsDir, { recursive: true });
+}
+
+const sessionMiddleware = session({
+  store: IS_VERCEL ? undefined : new FileStore({
+    path: sessionsDir,
+    ttl: 86400,
+    retries: 0,
+    logFn: () => {}
+  }),
   secret: SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
   cookie: { secure: false, httpOnly: true, sameSite: 'lax', maxAge: 24 * 60 * 60 * 1000 }
-}));
+});
+app.use(sessionMiddleware);
+
+// ── OAuth2 PKCE + Constants ──────────────────────────────────────────────
+const NEBIUS_AUTH_URL = 'https://auth.nebius.com/oauth2/authorize';
+const NEBIUS_TOKEN_URL = 'https://auth.nebius.com/oauth2/token';
+const NEBIUS_CLIENT_ID = process.env.NEBIUS_CLIENT_ID || 'nebius-cli';
+const OAUTH_REDIRECT_URI = process.env.OAUTH_REDIRECT_URI || 'https://claw.moi/api/auth/callback';
+
+function generatePKCE() {
+  const verifier = crypto.randomBytes(32).toString('base64url');
+  const challenge = crypto.createHash('sha256').update(verifier).digest('base64url');
+  return { verifier, challenge };
+}
 
 // ── Admin / Event Logger ────────────────────────────────────────────────────
 // Must be defined before loadNebiusConfig() is called at module load time.
@@ -405,7 +432,9 @@ function findSshKey() {
 }
 
 // ── Nebius CLI helper ──────────────────────────────────────────────────────
-function nebius(cmd, profile) {
+// iamToken: when provided, injects NEBIUS_IAM_TOKEN env var (per-user auth).
+//           when null/undefined, uses service account from CLI profile.
+function nebius(cmd, profile, iamToken) {
   if (profile && !/^[a-zA-Z0-9_-]+$/.test(profile)) {
     throw new Error('Invalid profile name');
   }
@@ -419,11 +448,14 @@ function nebius(cmd, profile) {
   const cmdLabel = safeCmd.split(' ').slice(0, 4).join(' ');
 
   const start = Date.now();
+  const execEnv = { ...process.env, PATH: process.env.PATH };
+  if (iamToken) execEnv.NEBIUS_IAM_TOKEN = iamToken;
+
   try {
     const result = execSync(`nebius ${profileFlag} ${cmd}`, {
       encoding: 'utf-8',
       timeout: 30000,
-      env: { ...process.env, PATH: process.env.PATH }
+      env: execEnv
     });
     emitEvent('debug', 'NEBIUS', cmdLabel, { duration: Date.now() - start, profile: profile || null });
     return result.trim();
@@ -438,9 +470,21 @@ function nebius(cmd, profile) {
   }
 }
 
-function nebiusJson(cmd, profile) {
-  const raw = nebius(`${cmd} --format json`, profile);
+function nebiusJson(cmd, profile, iamToken) {
+  const raw = nebius(`${cmd} --format json`, profile, iamToken);
   return JSON.parse(raw);
+}
+
+// Build env object for exec/spawn calls that invoke nebius CLI directly
+function nebiusExecEnv(iamToken) {
+  const env = { ...process.env, PATH: process.env.PATH };
+  if (iamToken) env.NEBIUS_IAM_TOKEN = iamToken;
+  return env;
+}
+
+// Extract user's Nebius IAM token from session (null = use service account)
+function getUserToken(req) {
+  return req.session?.nebiusToken || null;
 }
 
 // ── Deploy-time secrets (password stored per endpoint name) ────────────────
@@ -469,58 +513,160 @@ function storePassword(name, password) {
   try { fs.writeFileSync(PASSWORDS_FILE, JSON.stringify(endpointPasswords, null, 2)); } catch (e) { /* ignore */ }
 }
 
-// ── Routes: Auth ───────────────────────────────────────────────────────────
+// ── Routes: Auth (OAuth2 PKCE) ────────────────────────────────────────────
 
-// Check if user is authenticated via nebius CLI
+// Check authentication status from session
 app.get('/api/auth/status', (req, res) => {
   if (IS_VERCEL) {
     req.session.authenticated = true;
     return res.json({ authenticated: true, user: 'Demo User', demo: true });
   }
 
-  try {
-    const token = nebius('iam get-access-token');
-    if (token) {
-      req.session.authenticated = true;
-      req.session.token = token;
-
-      // Try to get user info
-      let user = 'Nebius User';
-      try {
-        const whoami = execSync('nebius iam whoami --format json', { encoding: 'utf-8', timeout: 10000 }).trim();
-        const identity = JSON.parse(whoami);
-        const attrs = identity.user_profile?.attributes || {};
-        user = attrs.name || attrs.given_name || attrs.email || identity.user_profile?.id || 'Nebius User';
-      } catch (e) {}
-
-      eventLog.info('AUTH', 'Session authenticated', { user });
-      trackLogin(true);
-      res.json({ authenticated: true, user });
-    } else {
-      trackLogin(false);
-      res.json({ authenticated: false });
+  if (req.session.authenticated) {
+    // Check if token has expired (non-demo only)
+    if (req.session.tokenExpiresAt && Date.now() > req.session.tokenExpiresAt) {
+      req.session.destroy();
+      return res.json({ authenticated: false, expired: true });
     }
+
+    const result = {
+      authenticated: true,
+      user: req.session.user || 'Nebius User',
+      demo: req.session.isDemo || false
+    };
+
+    if (req.session.tokenExpiresAt) {
+      result.tokenExpiresAt = req.session.tokenExpiresAt;
+      result.tokenExpiresIn = Math.max(0, Math.floor((req.session.tokenExpiresAt - Date.now()) / 1000));
+    }
+
+    return res.json(result);
+  }
+
+  res.json({ authenticated: false });
+});
+
+// OAuth2 login — redirect to Nebius with PKCE
+app.get('/api/auth/login', (req, res) => {
+  const { verifier, challenge } = generatePKCE();
+  const state = crypto.randomBytes(16).toString('hex');
+
+  req.session.pkceVerifier = verifier;
+  req.session.oauthState = state;
+
+  const params = new URLSearchParams({
+    client_id: NEBIUS_CLIENT_ID,
+    response_type: 'code',
+    scope: 'openid',
+    redirect_uri: OAUTH_REDIRECT_URI,
+    code_challenge: challenge,
+    code_challenge_method: 'S256',
+    state
+  });
+
+  res.redirect(`${NEBIUS_AUTH_URL}?${params}`);
+});
+
+// OAuth2 callback — exchange code for token
+app.get('/api/auth/callback', async (req, res) => {
+  const { code, state, error } = req.query;
+
+  if (error) {
+    eventLog.error('AUTH', 'OAuth error from Nebius', { error });
+    return res.redirect('/?auth_error=' + encodeURIComponent(error));
+  }
+
+  if (!code || state !== req.session.oauthState) {
+    eventLog.error('AUTH', 'OAuth state mismatch or missing code');
+    return res.redirect('/?auth_error=invalid_state');
+  }
+
+  try {
+    const tokenResp = await fetch(NEBIUS_TOKEN_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'authorization_code',
+        client_id: NEBIUS_CLIENT_ID,
+        code,
+        redirect_uri: OAUTH_REDIRECT_URI,
+        code_verifier: req.session.pkceVerifier
+      })
+    });
+
+    const tokenData = await tokenResp.json();
+
+    if (!tokenResp.ok || !tokenData.access_token) {
+      eventLog.error('AUTH', 'Token exchange failed', { status: tokenResp.status, error: tokenData.error });
+      return res.redirect('/?auth_error=token_exchange_failed');
+    }
+
+    // Store token in session
+    req.session.nebiusToken = tokenData.access_token;
+    req.session.tokenExpiresAt = Date.now() + (tokenData.expires_in || 43200) * 1000;
+    req.session.authenticated = true;
+    req.session.isDemo = false;
+
+    // Clean up PKCE state
+    delete req.session.pkceVerifier;
+    delete req.session.oauthState;
+
+    // Get user identity using their token
+    let user = 'Nebius User';
+    try {
+      const whoami = execSync('nebius iam whoami --format json', {
+        encoding: 'utf-8',
+        timeout: 10000,
+        env: nebiusExecEnv(tokenData.access_token)
+      }).trim();
+      const identity = JSON.parse(whoami);
+      const attrs = identity.user_profile?.attributes || {};
+      user = attrs.name || attrs.given_name || attrs.email || identity.user_profile?.id || 'Nebius User';
+    } catch (e) {
+      eventLog.warn('AUTH', 'Could not fetch user identity', { error: e.message });
+    }
+
+    req.session.user = user;
+    eventLog.info('AUTH', 'User logged in via OAuth', { user });
+    trackLogin(true);
+
+    res.redirect('/');
   } catch (err) {
-    res.json({ authenticated: false, error: 'Run: nebius iam login' });
+    eventLog.error('AUTH', 'OAuth callback error', { error: err.message });
+    res.redirect('/?auth_error=server_error');
   }
 });
 
-// Trigger browser-based Nebius login
-app.post('/api/auth/login', (req, res) => {
-  try {
-    // This opens the browser for OAuth — runs async
-    exec('nebius iam login', (err) => {
-      if (err) eventLog.error('AUTH', 'nebius iam login failed', { error: err.message });
-    });
-    res.json({ message: 'Login initiated — check your browser' });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+// Demo mode — use service account (no user token)
+app.get('/demo', (req, res) => {
+  req.session.authenticated = true;
+  req.session.isDemo = true;
+  req.session.nebiusToken = null;
+  req.session.user = 'Demo User';
+  req.session.tokenExpiresAt = null;
+  eventLog.info('AUTH', 'Demo mode session started');
+  trackLogin(true);
+  res.redirect('/');
 });
 
 app.post('/api/auth/logout', (req, res) => {
   req.session.destroy();
   res.json({ message: 'Logged out' });
+});
+
+// ── Token expiry middleware ───────────────────────────────────────────────
+// Check user token hasn't expired before processing API requests
+app.use('/api', (req, res, next) => {
+  // Skip auth-related routes
+  if (req.path.startsWith('/auth/')) return next();
+  // Skip if not authenticated or demo mode (demo uses service account)
+  if (!req.session?.authenticated || req.session.isDemo) return next();
+  // Check token expiry
+  if (req.session.tokenExpiresAt && Date.now() > req.session.tokenExpiresAt) {
+    req.session.destroy();
+    return res.status(401).json({ error: 'Session expired. Please log in again.', expired: true });
+  }
+  next();
 });
 
 // ── Routes: MysteryBox Secrets ─────────────────────────────────────────────
@@ -529,7 +675,8 @@ app.get('/api/secrets', requireAuth, (req, res) => {
   if (IS_VERCEL) return res.json([{ id: 'demo-secret', name: 'token-factory-key', description: 'Demo API key', state: 'ACTIVE' }]);
 
   try {
-    const data = nebiusJson('mysterybox secret list');
+    const token = getUserToken(req);
+    const data = nebiusJson('mysterybox secret list', null, token);
     const secrets = (data.items || []).map(s => ({
       id: s.metadata.id,
       name: s.metadata.name,
@@ -547,7 +694,8 @@ app.get('/api/secrets/:id/payload', requireAuth, (req, res) => {
 
   try {
     const id = validateId(req.params.id);
-    const data = nebiusJson(`mysterybox payload get --secret-id ${id}`);
+    const token = getUserToken(req);
+    const data = nebiusJson(`mysterybox payload get --secret-id ${id}`, null, token);
     // Return all key-value pairs from the secret
     const payload = {};
     for (const entry of (data.data || [])) {
@@ -584,10 +732,13 @@ app.post('/api/secrets', requireAuth, (req, res) => {
     return res.status(500).json({ error: 'No project configured. Check Nebius CLI setup.' });
   }
 
+  const token = getUserToken(req);
+
   try {
     const payloadJson = JSON.stringify([{ key, string_value: value }]);
     const result = nebius(
-      `mysterybox secret create --name "${safeName}" --parent-id ${projectId} --secret-version-payload '${payloadJson}' --format json`
+      `mysterybox secret create --name "${safeName}" --parent-id ${projectId} --secret-version-payload '${payloadJson}' --format json`,
+      null, token
     );
     const parsed = JSON.parse(result);
     res.json({
@@ -600,11 +751,11 @@ app.post('/api/secrets', requireAuth, (req, res) => {
     if (err.message.includes('AlreadyExists')) {
       try {
         // Find the existing secret ID
-        const existing = nebiusJson('mysterybox secret list');
+        const existing = nebiusJson('mysterybox secret list', null, token);
         const found = (existing.items || []).find(s => s.metadata?.name === safeName);
         if (found) {
           const payloadJson = JSON.stringify([{ key, string_value: value }]);
-          nebius(`mysterybox secret-version create --parent-id ${found.metadata.id} --payload '${payloadJson}' --set-primary --format json`);
+          nebius(`mysterybox secret-version create --parent-id ${found.metadata.id} --payload '${payloadJson}' --set-primary --format json`, null, token);
           return res.json({ id: found.metadata.id, name: safeName, message: 'Secret updated (new version)' });
         }
       } catch (updateErr) {
@@ -626,8 +777,9 @@ app.put('/api/secrets/:id', requireAuth, (req, res) => {
 
   try {
     const id = validateId(req.params.id);
+    const token = getUserToken(req);
     const payloadJson = JSON.stringify([{ key, string_value: value }]);
-    nebius(`mysterybox secret-version create --parent-id ${id} --payload '${payloadJson}' --set-primary --format json`);
+    nebius(`mysterybox secret-version create --parent-id ${id} --payload '${payloadJson}' --set-primary --format json`, null, token);
     res.json({ message: 'Secret updated' });
   } catch (err) {
     res.status(500).json({ error: `Failed to update secret: ${err.message.split('\n')[0]}` });
@@ -668,10 +820,11 @@ app.get('/api/registries', requireAuth, async (req, res) => {
 
   const results = [];
   const regionEntries = Object.entries(REGIONS);
+  const token = getUserToken(req);
 
   await Promise.all(regionEntries.map(async ([regionKey, regionConfig]) => {
     try {
-      const data = nebiusJson('registry list', regionConfig.profile);
+      const data = nebiusJson('registry list', regionConfig.profile, token);
       for (const reg of (data.items || [])) {
         results.push({
           id: reg.metadata.id,
@@ -703,7 +856,8 @@ app.get('/api/registries/:id/images', requireAuth, (req, res) => {
   try {
     const id = validateId(req.params.id);
     const profile = req.query.profile || undefined;
-    const data = nebiusJson(`registry image list --parent-id ${id}`, profile);
+    const token = getUserToken(req);
+    const data = nebiusJson(`registry image list --parent-id ${id}`, profile, token);
     const images = (data.items || []).map(img => {
       const fullName = img.name || img.metadata?.name || '';
       // Image name format: "registryId/imageName" — extract just the image name
@@ -907,7 +1061,8 @@ app.get('/api/platforms', requireAuth, (req, res) => {
   const profile = region ? (REGION_PROFILES[region] || Object.values(REGION_PROFILES).find(Boolean)) : Object.values(REGION_PROFILES).find(Boolean);
 
   try {
-    const data = nebiusJson('compute platform list', profile);
+    const token = getUserToken(req);
+    const data = nebiusJson('compute platform list', profile, token);
     const platforms = (data.items || []).map(p => ({
       id: p.metadata.name,
       presets: (p.spec?.presets || []).map(pr => ({
@@ -942,15 +1097,16 @@ app.post('/api/models', requireAuth, async (req, res) => {
 
     // Try user-provided API key first, then env var, then MysteryBox
     let authToken = req.body.apiKey || process.env.TOKEN_FACTORY_API_KEY || '';
+    const userIamToken = getUserToken(req);
     if (!authToken) {
       try {
-        const secretsJson = execSync('nebius mysterybox secret list --format json', { encoding: 'utf-8', timeout: 15000 });
+        const secretsJson = execSync('nebius mysterybox secret list --format json', { encoding: 'utf-8', timeout: 15000, env: nebiusExecEnv(userIamToken) });
         const secrets = JSON.parse(secretsJson);
         const tfSecret = (secrets.items || []).find(s =>
           (s.metadata?.name || '').toLowerCase().includes('token') && (s.metadata?.name || '').toLowerCase().includes('key')
         );
         if (tfSecret) {
-          const payloadJson = execSync(`nebius mysterybox payload get --secret-id ${validateId(tfSecret.metadata.id)} --format json`, { encoding: 'utf-8', timeout: 15000 });
+          const payloadJson = execSync(`nebius mysterybox payload get --secret-id ${validateId(tfSecret.metadata.id)} --format json`, { encoding: 'utf-8', timeout: 15000, env: nebiusExecEnv(userIamToken) });
           const payload = JSON.parse(payloadJson);
           const entry = (payload.data || [])[0];
           if (entry) authToken = entry.string_value || entry.text_value || '';
@@ -992,11 +1148,12 @@ app.get('/api/endpoints', requireAuth, async (req, res) => {
   if (IS_VERCEL) return res.json(DEMO_ENDPOINTS);
 
   const allEndpoints = [];
+  const token = getUserToken(req);
 
   for (const [region, profile] of Object.entries(REGION_PROFILES)) {
     if (!profile) continue;
     try {
-      const data = nebiusJson('ai endpoint list', profile);
+      const data = nebiusJson('ai endpoint list', profile, token);
       const regionInfo = REGIONS[region] || {};
 
       for (const ep of (data.items || [])) {
@@ -1080,6 +1237,7 @@ app.post('/api/deploy', requireAuth, async (req, res) => {
   const name = endpointName || `${imageType}-${region}-${Date.now().toString(36)}`;
   eventLog.info('DEPLOY', 'Deploy request received', { imageType, model, region, platform, provider, name });
   trackDeploy(imageType, region, platform);
+  const token = getUserToken(req);
 
   try {
     // Find or create project for this region
@@ -1095,7 +1253,7 @@ app.post('/api/deploy', requireAuth, async (req, res) => {
         // List all projects at tenant level and find one in the right region
         const firstProfile = Object.values(REGION_PROFILES)[0];
         const projects = nebiusJson(
-          `iam project list --parent-id ${TENANT_ID}`, firstProfile
+          `iam project list --parent-id ${TENANT_ID}`, firstProfile, token
         );
         // Prefer default-project-<region>, then openclaw-<region>, then any match
         const allInRegion = (projects.items || []).filter(
@@ -1112,7 +1270,7 @@ app.post('/api/deploy', requireAuth, async (req, res) => {
           eventLog.info('DEPLOY', 'Creating new project', { projName, region });
           const projResult = nebius(
             `iam project create --name "${projName}" --parent-id ${TENANT_ID} --format json`,
-            firstProfile
+            firstProfile, token
           );
           projectId = JSON.parse(projResult).metadata.id;
         }
@@ -1166,7 +1324,7 @@ app.post('/api/deploy', requireAuth, async (req, res) => {
     } else if (platform === 'gpu') {
       // Auto-detect cheapest single-GPU platform in this region
       try {
-        const platforms = nebiusJson('compute platform list', profile);
+        const platforms = nebiusJson('compute platform list', profile, token);
         const gpuPlatforms = (platforms.items || []).filter(p => p.metadata.name.startsWith('gpu-'));
         let cheapestGpu = null;
         let cheapestGpuCount = Infinity;
@@ -1191,7 +1349,7 @@ app.post('/api/deploy', requireAuth, async (req, res) => {
     } else {
       // Default: auto-detect cheapest CPU platform in this region
       try {
-        const platforms = nebiusJson('compute platform list', profile);
+        const platforms = nebiusJson('compute platform list', profile, token);
         const cpuPlatforms = (platforms.items || []).filter(p => p.metadata.name.startsWith('cpu-'));
 
         if (cpuPlatforms.length > 0) {
@@ -1222,7 +1380,7 @@ app.post('/api/deploy', requireAuth, async (req, res) => {
     // Find or create registry in this region
     let registryId;
     try {
-      const registries = nebiusJson('registry list', profile);
+      const registries = nebiusJson('registry list', profile, token);
       registryId = registries.items?.[0]?.metadata?.id;
       // Strip "registry-" prefix — image URLs use just the ID
       if (registryId) registryId = registryId.replace(/^registry-/, '');
@@ -1232,7 +1390,8 @@ app.post('/api/deploy', requireAuth, async (req, res) => {
       try {
         eventLog.info('DEPLOY', 'Creating container registry', { region });
         const regResult = nebius(
-          `registry create --name openclaw --parent-id ${projectId} --format json`
+          `registry create --name openclaw --parent-id ${projectId} --format json`,
+          null, token
         );
         registryId = JSON.parse(regResult).metadata.id;
         eventLog.info('DEPLOY', 'Container registry created', { registryId, region });
@@ -1257,11 +1416,12 @@ app.post('/api/deploy', requireAuth, async (req, res) => {
     // Check if the image exists in the registry; fall back to public GHCR if not
     if (imageType !== 'custom' && registryId) {
       try {
-        const token = execSync('nebius iam get-access-token', { encoding: 'utf-8' }).trim();
+        // Use user's IAM token if available, otherwise get one from CLI
+        const regCheckToken = token || execSync('nebius iam get-access-token', { encoding: 'utf-8' }).trim();
         const registryUrl = `cr.${region}.nebius.cloud`;
         const repoPath = `${registryId}/${imageType === 'nemoclaw' ? 'nemoclaw' : 'openclaw'}-serverless`;
         const checkResult = execSync(
-          `curl -sf -o /dev/null -w "%{http_code}" -H "Authorization: Bearer ${token}" "https://${registryUrl}/v2/${repoPath}/tags/list"`,
+          `curl -sf -o /dev/null -w "%{http_code}" -H "Authorization: Bearer ${regCheckToken}" "https://${registryUrl}/v2/${repoPath}/tags/list"`,
           { encoding: 'utf-8', timeout: 10000 }
         ).trim();
         if (checkResult === '404' || checkResult === '401') {
@@ -1343,7 +1503,7 @@ app.post('/api/deploy', requireAuth, async (req, res) => {
     eventLog.info('DEPLOY', 'Deploy queued', { name, region, image, platform: regionConfig.cpuPlatform, preset: regionConfig.cpuPreset });
 
     // Run async so we don't block
-    exec(`nebius ${cmd}`, { timeout: 120000 }, (err, stdout, stderr) => {
+    exec(`nebius ${cmd}`, { timeout: 120000, env: nebiusExecEnv(token) }, (err, stdout, stderr) => {
       if (err) {
         eventLog.error('DEPLOY', 'Deploy failed', { region, name, error: stderr || err.message });
       } else {
@@ -1373,7 +1533,8 @@ app.delete('/api/endpoints/:id', requireAuth, (req, res) => {
 
   try {
     const id = validateId(req.params.id);
-    exec(`nebius ai endpoint delete --id ${id}`, { timeout: 60000 }, (err) => {
+    const token = getUserToken(req);
+    exec(`nebius ai endpoint delete --id ${id}`, { timeout: 60000, env: nebiusExecEnv(token) }, (err) => {
       if (err) eventLog.error('DEPLOY', 'Endpoint delete failed', { id: req.params.id, error: err.message });
     });
     res.json({ status: 'deleting', id });
@@ -1386,7 +1547,8 @@ app.post('/api/endpoints/:id/stop', requireAuth, (req, res) => {
   if (IS_VERCEL) return res.json({ status: 'demo' });
   try {
     const id = validateId(req.params.id);
-    exec(`nebius ai endpoint stop --id ${id}`, { timeout: 120000 }, (err) => {
+    const token = getUserToken(req);
+    exec(`nebius ai endpoint stop --id ${id}`, { timeout: 120000, env: nebiusExecEnv(token) }, (err) => {
       if (err) eventLog.error('DEPLOY', 'Endpoint stop failed', { error: err.message });
     });
     res.json({ status: 'stopping', id });
@@ -1399,7 +1561,8 @@ app.post('/api/endpoints/:id/start', requireAuth, (req, res) => {
   if (IS_VERCEL) return res.json({ status: 'demo' });
   try {
     const id = validateId(req.params.id);
-    exec(`nebius ai endpoint start --id ${id}`, { timeout: 120000 }, (err) => {
+    const token = getUserToken(req);
+    exec(`nebius ai endpoint start --id ${id}`, { timeout: 120000, env: nebiusExecEnv(token) }, (err) => {
       if (err) eventLog.error('DEPLOY', 'Endpoint start failed', { error: err.message });
     });
     res.json({ status: 'starting', id });
@@ -1696,12 +1859,15 @@ wssLogs.on('connection', (ws, req) => {
     return;
   }
 
+  // Get user token from session (parsed during WS upgrade)
+  const wsToken = req.session?.nebiusToken || null;
+
   // Find the profile for this endpoint
   let profile = null;
   for (const [region, info] of Object.entries(REGIONS)) {
     if (info.profile) {
       try {
-        const data = nebiusJson('ai endpoint list', info.profile);
+        const data = nebiusJson('ai endpoint list', info.profile, wsToken);
         if ((data.items || []).some(ep => ep.metadata.id === endpointId)) {
           profile = info.profile;
           break;
@@ -1716,7 +1882,7 @@ wssLogs.on('connection', (ws, req) => {
   const args = ['ai', 'endpoint', 'logs', endpointId, '--follow', '--timestamps', '--tail', '100'];
   if (profile) args.push('--profile', profile);
 
-  const logProc = spawn('nebius', args, { env: { ...process.env, PATH: process.env.PATH } });
+  const logProc = spawn('nebius', args, { env: nebiusExecEnv(wsToken) });
 
   logProc.stdout.on('data', (data) => {
     if (ws.readyState === WebSocket.OPEN) {
@@ -1966,6 +2132,8 @@ app.get('*', (req, res) => {
 
 // ── WebSocket upgrade handler (manual routing to avoid middleware interference) ──
 server.on('upgrade', (request, socket, head) => {
+  // Parse Express session from cookie so WS handlers can access user tokens
+  sessionMiddleware(request, {}, () => {
   const { pathname } = new URL(request.url, `http://${request.headers.host}`);
 
   if (pathname === '/ws/terminal') {
@@ -2031,6 +2199,7 @@ server.on('upgrade', (request, socket, head) => {
   } else {
     socket.destroy();
   }
+  }); // end sessionMiddleware callback
 });
 
 // ── Start server ───────────────────────────────────────────────────────────

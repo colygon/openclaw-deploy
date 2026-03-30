@@ -161,12 +161,32 @@ function setupDelegatedListeners() {
 async function authFetch(url, options = {}) {
   let res = await fetch(url, options);
   if (res.status === 401) {
-    // Session expired — silently re-authenticate via CLI
+    // Check if token expired
+    try {
+      const body = await res.clone().json();
+      if (body.expired) {
+        // Session expired — show login screen with message
+        state.authenticated = false;
+        show('login-screen');
+        hide('main-app');
+        hide('bottom-dock');
+        document.getElementById('login-hint').textContent = 'Session expired. Please log in again.';
+        return res;
+      }
+    } catch (e) {}
+    // Try re-authenticating
     const authRes = await fetch('/api/auth/status');
     const authData = await authRes.json();
     if (authData.authenticated) {
-      // Retry the original request with fresh session
       res = await fetch(url, options);
+    } else {
+      state.authenticated = false;
+      show('login-screen');
+      hide('main-app');
+      hide('bottom-dock');
+      document.getElementById('login-hint').textContent = authData.expired
+        ? 'Session expired. Please log in again.'
+        : 'Please log in to continue.';
     }
   }
   return res;
@@ -174,6 +194,24 @@ async function authFetch(url, options = {}) {
 
 // ── Auth ─────────────────────────────────────────────────────────────────────
 async function checkAuth() {
+  // Check for OAuth error in URL params (returned from callback)
+  const urlParams = new URLSearchParams(window.location.search);
+  const authError = urlParams.get('auth_error');
+  if (authError) {
+    // Clean the URL
+    window.history.replaceState({}, '', window.location.pathname);
+    show('login-screen');
+    hide('main-app');
+    hide('bottom-dock');
+    const errorMessages = {
+      invalid_state: 'Login failed: invalid session state. Please try again.',
+      token_exchange_failed: 'Login failed: could not exchange authorization code.',
+      server_error: 'Login failed: server error. Please try again.',
+    };
+    document.getElementById('login-hint').textContent = errorMessages[authError] || `Login failed: ${authError}`;
+    return;
+  }
+
   try {
     const res = await fetch('/api/auth/status');
     const data = await res.json();
@@ -189,7 +227,13 @@ async function checkAuth() {
       const initials = (data.user || '?').split(' ').map(w => w[0]).join('').substring(0, 2).toUpperCase();
       document.getElementById('user-avatar').textContent = initials;
 
-      // Show demo banner if on Vercel
+      // Show session expiry indicator if <30 min remaining
+      if (data.tokenExpiresIn != null && data.tokenExpiresIn < 1800 && !data.demo) {
+        const mins = Math.floor(data.tokenExpiresIn / 60);
+        showToast(`Session expires in ${mins} min`, 'warning');
+      }
+
+      // Show demo banner if in demo mode
       if (state.demo) {
         showDemoBanner();
       }
@@ -205,7 +249,9 @@ async function checkAuth() {
       show('login-screen');
       hide('main-app');
       hide('bottom-dock');
-      if (data.error) {
+      if (data.expired) {
+        document.getElementById('login-hint').textContent = 'Session expired. Please log in again.';
+      } else if (data.error) {
         document.getElementById('login-hint').textContent = data.error;
       }
     }
@@ -215,33 +261,9 @@ async function checkAuth() {
   }
 }
 
-async function login() {
-  const btn = document.getElementById('login-btn');
-  btn.disabled = true;
-  btn.innerHTML = '<span class="spinner"></span> Checking browser...';
-
-  try {
-    await fetch('/api/auth/login', { method: 'POST' });
-    document.getElementById('login-hint').textContent =
-      'Complete login in your browser, then this page will refresh...';
-
-    // Poll for auth completion
-    const poll = setInterval(async () => {
-      const res = await fetch('/api/auth/status');
-      const data = await res.json();
-      if (data.authenticated) {
-        clearInterval(poll);
-        checkAuth();
-      }
-    }, 2000);
-
-    // Stop polling after 2 minutes
-    setTimeout(() => clearInterval(poll), 120000);
-  } catch (err) {
-    btn.disabled = false;
-    btn.innerHTML = 'Login with Nebius';
-    document.getElementById('login-hint').textContent = 'Login failed: ' + err.message;
-  }
+function login() {
+  // Redirect to Nebius OAuth login
+  window.location.href = '/api/auth/login';
 }
 
 async function logout() {

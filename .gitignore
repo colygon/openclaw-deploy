@@ -8,3 +8,4 @@ node_modules/
 .nebius/
 .vercel
 endpoint-passwords.json
+web/data/sessions/
