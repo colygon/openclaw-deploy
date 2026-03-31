@@ -546,94 +546,43 @@ app.get('/api/auth/status', (req, res) => {
   res.json({ authenticated: false });
 });
 
-// OAuth2 login — redirect to Nebius with PKCE
-app.get('/api/auth/login', (req, res) => {
-  const { verifier, challenge } = generatePKCE();
-  const state = crypto.randomBytes(16).toString('hex');
-
-  req.session.pkceVerifier = verifier;
-  req.session.oauthState = state;
-
-  const params = new URLSearchParams({
-    client_id: NEBIUS_CLIENT_ID,
-    response_type: 'code',
-    scope: 'openid',
-    redirect_uri: OAUTH_REDIRECT_URI,
-    code_challenge: challenge,
-    code_challenge_method: 'S256',
-    state
-  });
-
-  res.redirect(`${NEBIUS_AUTH_URL}?${params}`);
-});
-
-// OAuth2 callback — exchange code for token
-app.get('/api/auth/callback', async (req, res) => {
-  const { code, state, error } = req.query;
-
-  if (error) {
-    eventLog.error('AUTH', 'OAuth error from Nebius', { error });
-    return res.redirect('/?auth_error=' + encodeURIComponent(error));
+// Token-paste login — user runs `nebius iam get-access-token` locally and pastes it
+app.post('/api/auth/token', async (req, res) => {
+  const { token } = req.body;
+  if (!token || typeof token !== 'string' || token.trim().length < 10) {
+    return res.status(400).json({ error: 'A valid access token is required' });
   }
 
-  if (!code || state !== req.session.oauthState) {
-    eventLog.error('AUTH', 'OAuth state mismatch or missing code');
-    return res.redirect('/?auth_error=invalid_state');
-  }
+  const trimmedToken = token.trim();
 
   try {
-    const tokenResp = await fetch(NEBIUS_TOKEN_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        grant_type: 'authorization_code',
-        client_id: NEBIUS_CLIENT_ID,
-        code,
-        redirect_uri: OAUTH_REDIRECT_URI,
-        code_verifier: req.session.pkceVerifier
-      })
-    });
+    // Verify the token by running whoami
+    const whoami = execSync('nebius iam whoami --format json', {
+      encoding: 'utf-8',
+      timeout: 10000,
+      env: nebiusExecEnv(trimmedToken)
+    }).trim();
+    const identity = JSON.parse(whoami);
+    const attrs = identity.user_profile?.attributes || {};
+    const user = attrs.name || attrs.given_name || attrs.email || identity.user_profile?.id || 'Nebius User';
 
-    const tokenData = await tokenResp.json();
-
-    if (!tokenResp.ok || !tokenData.access_token) {
-      eventLog.error('AUTH', 'Token exchange failed', { status: tokenResp.status, error: tokenData.error });
-      return res.redirect('/?auth_error=token_exchange_failed');
-    }
-
-    // Store token in session
-    req.session.nebiusToken = tokenData.access_token;
-    req.session.tokenExpiresAt = Date.now() + (tokenData.expires_in || 43200) * 1000;
+    // Store token in session (~12h lifetime, no refresh tokens)
+    req.session.nebiusToken = trimmedToken;
+    req.session.tokenExpiresAt = Date.now() + 12 * 60 * 60 * 1000;
     req.session.authenticated = true;
     req.session.isDemo = false;
-
-    // Clean up PKCE state
-    delete req.session.pkceVerifier;
-    delete req.session.oauthState;
-
-    // Get user identity using their token
-    let user = 'Nebius User';
-    try {
-      const whoami = execSync('nebius iam whoami --format json', {
-        encoding: 'utf-8',
-        timeout: 10000,
-        env: nebiusExecEnv(tokenData.access_token)
-      }).trim();
-      const identity = JSON.parse(whoami);
-      const attrs = identity.user_profile?.attributes || {};
-      user = attrs.name || attrs.given_name || attrs.email || identity.user_profile?.id || 'Nebius User';
-    } catch (e) {
-      eventLog.warn('AUTH', 'Could not fetch user identity', { error: e.message });
-    }
-
     req.session.user = user;
-    eventLog.info('AUTH', 'User logged in via OAuth', { user });
+
+    eventLog.info('AUTH', 'User logged in via token paste', { user });
     trackLogin(true);
 
-    res.redirect('/');
+    res.json({ authenticated: true, user });
   } catch (err) {
-    eventLog.error('AUTH', 'OAuth callback error', { error: err.message });
-    res.redirect('/?auth_error=server_error');
+    eventLog.error('AUTH', 'Token verification failed', { error: err.message });
+    trackLogin(false);
+    res.status(401).json({
+      error: 'Invalid token. Run "nebius iam login" first, then "nebius iam get-access-token".'
+    });
   }
 });
 

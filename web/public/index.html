@@ -24,6 +24,22 @@
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
           Login with Nebius
         </button>
+
+        <div id="token-form" style="display:none">
+          <p class="token-instructions">Run in your terminal:</p>
+          <div class="token-cmd-wrap">
+            <code class="token-cmd">nebius iam get-access-token</code>
+            <button class="token-copy-btn" onclick="navigator.clipboard.writeText('nebius iam get-access-token')" title="Copy command">📋</button>
+          </div>
+          <p class="token-instructions dim">Then paste the token below</p>
+          <input type="password" id="token-input" class="token-input" placeholder="Paste access token here" onkeydown="if(event.key==='Enter')submitToken()" autocomplete="off">
+          <div class="token-actions">
+            <button id="token-submit-btn" class="btn btn-primary" onclick="submitToken()">Verify & Login</button>
+            <button class="btn btn-ghost" onclick="cancelLogin()">Cancel</button>
+          </div>
+          <p class="token-hint">Don't have the CLI? Run <code>curl -sSL https://storage.ai.nebius.cloud/nebius/install.sh | bash</code> first, then <code>nebius iam login</code></p>
+        </div>
+
         <p class="hint" id="login-hint"></p>
         <a href="/demo" class="demo-link">or try the demo →</a>
       </div>

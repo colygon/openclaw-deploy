@@ -194,24 +194,6 @@ async function authFetch(url, options = {}) {
 
 // ── Auth ─────────────────────────────────────────────────────────────────────
 async function checkAuth() {
-  // Check for OAuth error in URL params (returned from callback)
-  const urlParams = new URLSearchParams(window.location.search);
-  const authError = urlParams.get('auth_error');
-  if (authError) {
-    // Clean the URL
-    window.history.replaceState({}, '', window.location.pathname);
-    show('login-screen');
-    hide('main-app');
-    hide('bottom-dock');
-    const errorMessages = {
-      invalid_state: 'Login failed: invalid session state. Please try again.',
-      token_exchange_failed: 'Login failed: could not exchange authorization code.',
-      server_error: 'Login failed: server error. Please try again.',
-    };
-    document.getElementById('login-hint').textContent = errorMessages[authError] || `Login failed: ${authError}`;
-    return;
-  }
-
   try {
     const res = await fetch('/api/auth/status');
     const data = await res.json();
@@ -262,8 +244,55 @@ async function checkAuth() {
 }
 
 function login() {
-  // Redirect to Nebius OAuth login
-  window.location.href = '/api/auth/login';
+  // Show the token paste form
+  document.getElementById('login-btn').style.display = 'none';
+  document.getElementById('token-form').style.display = 'block';
+  document.getElementById('login-hint').textContent = '';
+  setTimeout(() => document.getElementById('token-input').focus(), 100);
+}
+
+async function submitToken() {
+  const input = document.getElementById('token-input');
+  const token = input.value.trim();
+  if (!token) {
+    document.getElementById('login-hint').textContent = 'Please paste your access token';
+    return;
+  }
+
+  const btn = document.getElementById('token-submit-btn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Verifying...';
+  document.getElementById('login-hint').textContent = '';
+
+  try {
+    const res = await fetch('/api/auth/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token })
+    });
+    const data = await res.json();
+
+    if (data.authenticated) {
+      // Clear the token from the input
+      input.value = '';
+      checkAuth();
+    } else {
+      document.getElementById('login-hint').textContent = data.error || 'Invalid token';
+      btn.disabled = false;
+      btn.innerHTML = 'Verify & Login';
+    }
+  } catch (err) {
+    document.getElementById('login-hint').textContent = 'Connection error: ' + err.message;
+    btn.disabled = false;
+    btn.innerHTML = 'Verify & Login';
+  }
+}
+
+function cancelLogin() {
+  document.getElementById('token-form').style.display = 'none';
+  document.getElementById('login-btn').style.display = '';
+  document.getElementById('token-input').value = '';
+  document.getElementById('login-hint').textContent = '';
 }
 
 async function logout() {
