@@ -468,14 +468,13 @@
                 <small style="color:var(--text-muted);margin-top:4px;display:block">Enter a public GitHub repo containing a Dockerfile</small>
               </div>
               <div id="build-source-viewer" class="form-group hidden">
-                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
-                  <label style="margin:0">Dockerfile</label>
-                  <a id="build-source-repo" href="#" target="_blank" style="font-size:11px;color:var(--accent)">View on GitHub ↗</a>
-                </div>
-                <pre id="build-source-code" style="background:var(--bg-inset);border:1px solid var(--border-color);border-radius:6px;padding:12px;font-size:11px;line-height:1.5;max-height:300px;overflow-y:auto;white-space:pre-wrap;word-break:break-all;color:var(--text-secondary);margin:0"></pre>
-                <details style="margin-top:6px">
-                  <summary style="font-size:11px;color:var(--text-muted);cursor:pointer">Entrypoint script</summary>
-                  <pre id="build-source-entrypoint" style="background:var(--bg-inset);border:1px solid var(--border-color);border-radius:6px;padding:12px;font-size:11px;line-height:1.5;max-height:300px;overflow-y:auto;white-space:pre-wrap;word-break:break-all;color:var(--text-secondary);margin-top:4px"></pre>
+                <details>
+                  <summary style="font-size:12px;color:var(--text-muted);cursor:pointer">Dockerfile</summary>
+                  <pre id="build-source-code" style="background:var(--bg-inset);border:1px solid var(--border-color);border-radius:6px;padding:12px;font-size:11px;line-height:1.5;max-height:300px;overflow-y:auto;white-space:pre-wrap;word-break:break-all;color:var(--text-secondary);margin:4px 0 0"></pre>
+                  <details style="margin-top:6px">
+                    <summary style="font-size:11px;color:var(--text-muted);cursor:pointer">Entrypoint script</summary>
+                    <pre id="build-source-entrypoint" style="background:var(--bg-inset);border:1px solid var(--border-color);border-radius:6px;padding:12px;font-size:11px;line-height:1.5;max-height:300px;overflow-y:auto;white-space:pre-wrap;word-break:break-all;color:var(--text-secondary);margin-top:4px"></pre>
+                  </details>
                 </details>
               </div>
               <div class="form-group">
