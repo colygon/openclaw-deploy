@@ -2205,7 +2205,7 @@ input::placeholder { color: var(--deep-navy); opacity: 0.35; }
 /* ── Terminal Panel ───────────────────────────────────────────────── */
 .terminal-panel {
   position: fixed;
-  top: 0;
+  top: 50%;
   left: 0;
   right: 0;
   bottom: 0;
@@ -2214,6 +2214,7 @@ input::placeholder { color: var(--deep-navy); opacity: 0.35; }
   display: flex;
   flex-direction: column;
   transition: transform 0.3s ease;
+  border-top: 2px solid rgba(255, 255, 255, 0.15);
 }
 
 .terminal-panel.hidden {
