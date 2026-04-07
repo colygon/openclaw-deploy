@@ -233,9 +233,11 @@ async function checkAuth() {
         showToast(`Session expires in ${mins} min`, 'warning');
       }
 
-      // Show demo banner if in demo mode
+      // Show demo banner if in demo mode, prototype banner otherwise
       if (state.demo) {
         showDemoBanner();
+      } else {
+        showPrototypeBanner();
       }
 
       loadImages();
@@ -1950,6 +1952,22 @@ function showDemoBanner() {
   closeBtn.textContent = '\u00d7';
   closeBtn.addEventListener('click', () => banner.remove());
   banner.append(bannerText, cmd, closeBtn);
+  document.body.prepend(banner);
+}
+
+function showPrototypeBanner() {
+  if (document.querySelector('.demo-banner')) return;
+  const banner = document.createElement('div');
+  banner.className = 'demo-banner';
+  const bannerText = document.createElement('span');
+  const bold = document.createElement('strong');
+  bold.textContent = 'Prototype';
+  bannerText.append('🦞 ', bold, ' — This is a community project, not an official Nebius service.');
+  const closeBtn = document.createElement('button');
+  closeBtn.className = 'demo-close';
+  closeBtn.textContent = '\u00d7';
+  closeBtn.addEventListener('click', () => banner.remove());
+  banner.append(bannerText, closeBtn);
   document.body.prepend(banner);
 }
 
