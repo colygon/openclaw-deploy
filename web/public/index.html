@@ -143,17 +143,17 @@
             <div class="gs-step">
               <div class="gs-step-num">1</div>
               <div class="gs-step-body">
-                <h3>Build a Docker image</h3>
-                <p>Head to the <strong>Docker Registry</strong> page and click <strong>Build Image</strong>. Choose an agent type (OpenClaw or NemoClaw), pick a target region, then click <strong>Build &amp; Push</strong>. The build runs on your VM and pushes the image to your Nebius container registry — this takes a few minutes the first time.</p>
+                <h3>Get a Token Factory API key</h3>
+                <p>Sign up at <strong>tokenfactory.nebius.com</strong> and create an API key. This key lets your agent call LLM inference on Nebius GPUs — no need to run your own model.</p>
                 <ul class="gs-bullets">
-                  <li>OpenClaw — general-purpose agent, runs on serverless CPU</li>
-                  <li>NemoClaw — GPU-accelerated, runs on an H200 VM</li>
-                  <li>Or paste any public Docker image URL and skip this step</li>
+                  <li>Token Factory provides access to Llama, DeepSeek, Qwen, and more</li>
+                  <li>Keys start with <code>v1.</code> — you'll paste it during deployment</li>
+                  <li>GPU endpoints run models locally and don't need a key</li>
                 </ul>
-                <button class="btn btn-primary btn-sm gs-action" onclick="switchPage('registry'); showBuildDialog()">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12H2"/><path d="M5.45 5.11L2 12v6a2 2 0 002 2h16a2 2 0 002-2v-6l-3.45-6.89A2 2 0 0016.76 4H7.24a2 2 0 00-1.79 1.11z"/></svg>
-                  Go to Docker Registry
-                </button>
+                <a class="btn btn-primary btn-sm gs-action" href="https://tokenfactory.nebius.com" target="_blank" rel="noopener">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                  Get API Key
+                </a>
               </div>
             </div>
 

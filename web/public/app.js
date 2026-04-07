@@ -715,7 +715,16 @@ async function selectPlatform(key) {
   }
 
   updateProviderStepVisibility();
+  updateApiKeyOptionalHint();
   updateDeployButton();
+}
+
+function updateApiKeyOptionalHint() {
+  const gpu = isGpuSelected();
+  document.querySelectorAll('#api-key-group-tf label, #api-key-group-openrouter label, #api-key-group-huggingface label').forEach(label => {
+    const base = label.textContent.replace(/ \(optional.*\)/, '');
+    label.textContent = gpu ? base + ' (optional for GPU)' : base;
+  });
 }
 
 async function loadCustomPlatformOptions() {
@@ -770,6 +779,7 @@ async function loadCustomPlatformOptions() {
 function selectCustomPlatformPreset(value) {
   state.customPlatformValue = value || null;
   updateProviderStepVisibility();
+  updateApiKeyOptionalHint();
   updateDeployButton();
 }
 
@@ -1456,21 +1466,26 @@ async function toggleRegistryImages(registryId, region) {
   }
 }
 
-function showBuildDialog() {
+async function showBuildDialog() {
   const dialog = document.getElementById('build-dialog');
   dialog.classList.remove('hidden');
 
-  // Populate region selector
+  // Populate region selector from all available regions
   const select = document.getElementById('build-region');
   if (select.options.length <= 1) {
     select.innerHTML = '';
-    for (const reg of registriesCache) {
-      const opt = document.createElement('option');
-      opt.value = reg.region;
-      opt.textContent = `${reg.regionFlag} ${reg.regionName} (${reg.name})`;
-      select.appendChild(opt);
-    }
-    // If no registries, add regions from state
+    try {
+      const regRes = await authFetch('/api/regions');
+      if (regRes.ok) {
+        const regions = await regRes.json();
+        for (const [key, info] of Object.entries(regions)) {
+          const opt = document.createElement('option');
+          opt.value = key;
+          opt.textContent = `${info.flag || ''} ${info.name || key}`;
+          select.appendChild(opt);
+        }
+      }
+    } catch (_) {}
     if (select.options.length === 0) {
       select.innerHTML = '<option value="eu-north1">EU North (Finland)</option>';
     }
@@ -1506,11 +1521,12 @@ async function loadBuildSource(type) {
   const viewer = document.getElementById('build-source-viewer');
   const codeEl = document.getElementById('build-source-code');
   const entryEl = document.getElementById('build-source-entrypoint');
-  const repoLink = document.getElementById('build-source-repo');
-
   codeEl.textContent = 'Loading...';
   entryEl.textContent = '';
   viewer.classList.remove('hidden');
+
+  const repoLink = document.getElementById('build-source-repo');
+  if (repoLink) repoLink.style.display = 'none';
 
   try {
     const res = await authFetch(`/api/build/source/${encodeURIComponent(type)}`);
@@ -1518,8 +1534,6 @@ async function loadBuildSource(type) {
     if (!res.ok) throw new Error(data.error);
     codeEl.textContent = data.dockerfile || 'Dockerfile not found in build script';
     entryEl.textContent = data.entrypoint || 'No entrypoint script';
-    repoLink.href = data.repo || '#';
-    repoLink.textContent = `${data.scriptPath || 'Source'} on GitHub ↗`;
   } catch (e) {
     codeEl.textContent = `Error loading source: ${e.message}`;
   }
