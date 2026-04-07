@@ -419,6 +419,30 @@ function requireAuth(req, res, next) {
 }
 
 // ── SSH key finder ─────────────────────────────────────────────────────────
+// ── Crustacean name generator ─────────────────────────────────────────────
+const CRUSTACEAN_ADJECTIVES = [
+  'swift', 'brave', 'calm', 'bold', 'keen', 'warm', 'cool', 'wild',
+  'wise', 'kind', 'fair', 'deep', 'glad', 'cozy', 'lazy', 'fuzzy',
+  'tiny', 'snug', 'zany', 'rosy', 'plucky', 'peppy', 'jolly', 'lucky',
+  'sunny', 'misty', 'frosty', 'sandy', 'coral', 'golden', 'silver', 'crimson'
+];
+const CRUSTACEAN_NAMES = [
+  'crab', 'lobster', 'shrimp', 'prawn', 'crayfish', 'krill', 'barnacle',
+  'hermit', 'mantis', 'fiddler', 'horseshoe', 'coconut', 'spider-crab',
+  'yeti-crab', 'king-crab', 'snow-crab', 'blue-crab', 'mud-crab',
+  'dungeness', 'langoustine', 'crawdad', 'pistol-shrimp', 'cleaner-shrimp',
+  'rock-lobster', 'squat-lobster', 'slipper-lobster', 'reef-crab', 'pea-crab',
+  'porcelain-crab', 'velvet-crab', 'stone-crab', 'ghost-shrimp'
+];
+
+function generateCrustaceanName() {
+  const adj = CRUSTACEAN_ADJECTIVES[Math.floor(Math.random() * CRUSTACEAN_ADJECTIVES.length)];
+  const name = CRUSTACEAN_NAMES[Math.floor(Math.random() * CRUSTACEAN_NAMES.length)];
+  const num = Math.floor(Math.random() * 100);
+  return `${adj}-${name}-${num}`;
+}
+
+// ── SSH key finder ─────────────────────────────────────────────────────────
 function findSshKey() {
   const customPath = process.env.SSH_KEY_PATH;
   if (customPath && fs.existsSync(customPath)) return customPath;
@@ -1042,7 +1066,11 @@ app.post('/api/models', requireAuth, async (req, res) => {
   }
 
   try {
-    const tfUrl = 'https://api.tokenfactory.nebius.com/v1/models';
+    const tfRegion = req.body.region || '';
+    const tfBase = tfRegion
+      ? `https://api.tokenfactory.${tfRegion}.nebius.com/v1`
+      : 'https://api.tokenfactory.nebius.com/v1';
+    const tfUrl = `${tfBase}/models`;
 
     // Try user-provided API key first, then env var, then MysteryBox
     let authToken = req.body.apiKey || process.env.TOKEN_FACTORY_API_KEY || '';
@@ -1121,6 +1149,7 @@ app.get('/api/endpoints', requireAuth, async (req, res) => {
           name: ep.metadata.name,
           state: ep.status.state,
           publicIp: ep.status.instances?.[0]?.public_ip || null,
+          privateIp: ep.status.instances?.[0]?.private_ip || null,
           image: ep.spec.image,
           platform: ep.spec.platform,
           preset: ep.spec.preset || null,
@@ -1141,11 +1170,12 @@ app.get('/api/endpoints', requireAuth, async (req, res) => {
 
   // Fetch health status from each running endpoint (in parallel, non-blocking)
   await Promise.all(allEndpoints.map(async (ep) => {
-    if (ep.publicIp && ep.state === 'RUNNING') {
+    const healthIp = ep.publicIp || ep.privateIp;
+    if (healthIp && ep.state === 'RUNNING') {
       try {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 3000);
-        const resp = await fetch(`http://${ep.publicIp}:8080`, { signal: controller.signal });
+        const resp = await fetch(`http://${healthIp}:8080`, { signal: controller.signal });
         clearTimeout(timeout);
         ep.health = await resp.json();
       } catch (e) {
@@ -1166,7 +1196,7 @@ app.post('/api/deploy', requireAuth, async (req, res) => {
     });
   }
 
-  const { imageType, model, region, platform, platformPreset, provider, customImage, endpointName, apiKey } = req.body;
+  const { imageType, model, region, platform, platformPreset, provider, customImage, endpointName, apiKey, usePublicIp } = req.body;
 
   if (!imageType || !region) {
     return res.status(400).json({ error: 'imageType and region are required' });
@@ -1183,12 +1213,38 @@ app.post('/api/deploy', requireAuth, async (req, res) => {
     return res.status(400).json({ error: `${providerLabels[provider] || 'API'} key is required` });
   }
 
-  const name = endpointName || `${imageType}-${region}-${Date.now().toString(36)}`;
+  const name = endpointName || generateCrustaceanName();
   eventLog.info('DEPLOY', 'Deploy request received', { imageType, model, region, platform, provider, name });
   trackDeploy(imageType, region, platform);
   const token = getUserToken(req);
 
   try {
+    // Pre-flight: check public IPv4 quota before attempting deploy (only for public IP)
+    const wantPublicIp = usePublicIp !== false; // default true for backward compat
+    if (wantPublicIp && TENANT_ID) {
+      try {
+        const quota = nebiusJson(
+          `quotas quota-allowance get-by-name --name vpc.ipv4-address.public.count --parent-id ${TENANT_ID} --region ${region}`,
+          null, token
+        );
+        const limit = parseInt(quota.spec?.limit || '0', 10);
+        const usage = parseInt(quota.status?.usage || '0', 10);
+        if (usage >= limit) {
+          eventLog.warn('DEPLOY', 'Public IP quota exhausted', { region, limit, usage });
+          return res.status(400).json({
+            error: `No public IPv4 addresses available in ${regionConfig.name}. You are using ${usage}/${limit}. Delete or stop an existing endpoint to free up an IP, or request a quota increase from Nebius.`,
+            quotaExhausted: true,
+            limit,
+            usage
+          });
+        }
+        eventLog.debug('DEPLOY', 'IP quota check passed', { region, limit, usage });
+      } catch (quotaErr) {
+        // Don't block deploy if quota check itself fails — let it fail naturally
+        eventLog.warn('DEPLOY', 'IP quota check skipped', { region, error: quotaErr.message.split('\n')[0] });
+      }
+    }
+
     // Find or create project for this region
     let projectId = regionConfig.projectId;
     if (!projectId) {
@@ -1411,7 +1467,7 @@ app.post('/api/deploy', requireAuth, async (req, res) => {
         case 'token-factory':
         default:
           envFlags.push(`--env "TOKEN_FACTORY_API_KEY=${apiKey}"`);
-          envFlags.push('--env "TOKEN_FACTORY_URL=https://api.tokenfactory.nebius.com/v1"');
+          envFlags.push(`--env "TOKEN_FACTORY_URL=https://api.tokenfactory.${region}.nebius.com/v1"`);
           break;
       }
     }
@@ -1443,7 +1499,7 @@ app.post('/api/deploy', requireAuth, async (req, res) => {
       '--container-port 18789',
       '--disk-size 250Gi',
       ...envFlags,
-      '--public',
+      wantPublicIp ? '--public' : '',
       sshPubKey ? `--ssh-key "${sshPubKey}"` : ''
     ].filter(Boolean).join(' ');
 
@@ -1467,7 +1523,8 @@ app.post('/api/deploy', requireAuth, async (req, res) => {
       region: regionConfig.name,
       platform: regionConfig.cpuPlatform || 'cpu-e2',
       preset: regionConfig.cpuPreset || 'default',
-      message: `Deploying ${imageConfig.name} to ${regionConfig.name} (${regionConfig.cpuPlatform || 'cpu-e2'} / ${regionConfig.cpuPreset || 'default'})...`
+      publicIp: wantPublicIp,
+      message: `Deploying ${imageConfig.name} to ${regionConfig.name} (${regionConfig.cpuPlatform || 'cpu-e2'} / ${regionConfig.cpuPreset || 'default'}${wantPublicIp ? '' : ' / private IP'})...`
     });
 
   } catch (err) {
@@ -1886,7 +1943,7 @@ async function refreshProxyCache() {
       try {
         const data = nebiusJson('ai endpoint list', profile);
         for (const ep of (data.items || [])) {
-          const ip = ep.status.instances?.[0]?.public_ip;
+          const ip = ep.status.instances?.[0]?.public_ip || ep.status.instances?.[0]?.private_ip;
           if (ip) {
             proxyEndpointCache[ep.metadata.name] = {
               ip,

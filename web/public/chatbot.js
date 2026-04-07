@@ -28,6 +28,7 @@ function initChat() {
     platformPreset: null, platformPresetLabel: null,
     provider: 'token-factory', providerName: 'Token Factory', providerHint: 'v1.xxx...',
     apiKey: null,
+    network: 'private', networkName: 'Private IP',
     endpointName: '',
     mbSecrets: null,
   };
@@ -37,7 +38,7 @@ function initChat() {
   setInputMode(false);
 
   (async () => {
-    await botMsg("Hey! I'm your OpenClaw deploy assistant 🦞\n\nI'll walk you through deploying an AI agent on Nebius Cloud — tap an option or type its number.\n\nWhat type of agent do you want to deploy?");
+    await botMsg("Hey! I'll walk you through deploying an AI agent on Nebius Cloud 🦞\n\nTap an option or type its number at each step.\n\nFirst up — which agent image? Each one comes pre-configured with different tools and capabilities.");
     await loadAndShowAgents();
   })();
 }
@@ -167,7 +168,7 @@ async function loadAndShowAgents() {
       setInputMode(true, 'docker.io/myuser/myagent:latest');
       cs.step = 'custom_image';
     } else {
-      await botMsg(`${opt.icon || '✓'} ${cs.imageName} — great choice!\n\nWhat model should power it?`);
+      await botMsg(`Using ${cs.imageName}.\n\nNow pick a language model — this is the LLM the agent will use for reasoning and tool calls.`);
       await stepModel();
     }
   });
@@ -190,7 +191,7 @@ async function stepModel() {
     }
     cs.model = opt.id;
     cs.modelName = opt.name;
-    await botMsg(`${opt.name} it is! Which region do you want to deploy to?`);
+    await botMsg(`Using ${opt.name}.\n\nWhich region? Pick the one closest to your users for the lowest latency.`);
     await stepRegion();
   });
 }
@@ -201,7 +202,7 @@ async function stepModelBrowse() {
     const res = await authFetch('/api/models', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({}),
+      body: JSON.stringify({ region: cs.region || '' }),
     });
     const models = await res.json();
     hideTyping();
@@ -223,7 +224,7 @@ async function stepModelBrowse() {
       userMsg(`${opt.num} — ${opt.name}`);
       cs.model = opt.id;
       cs.modelName = opt.name;
-      await botMsg(`${opt.name} — perfect! Which region do you want to deploy to?`);
+      await botMsg(`Using ${opt.name}.\n\nWhich region? Pick the one closest to your users for the lowest latency.`);
       await stepRegion();
     });
   } catch (_) {
@@ -251,7 +252,7 @@ async function stepRegion() {
     userMsg(`${opt.num} — ${opt.name}`);
     cs.region = opt.id;
     cs.regionName = opt.name;
-    await botMsg(`${opt.label} — got it! How should the agent run?`);
+    await botMsg(`Deploying to ${opt.name}.\n\nHow should the agent run? GPU gives you a dedicated VM with the model loaded locally. CPU is serverless and starts faster, but needs an API key for inference.`);
     await stepPlatform();
   });
 }
@@ -267,10 +268,10 @@ async function stepPlatform() {
     cs.platform = opt.id;
     cs.platformName = opt.label.replace(/^\S+\s/, '');
     if (opt.id === 'gpu') {
-      await botMsg('GPU selected — no API key required. What should I name this endpoint?');
-      await stepName();
+      await botMsg('GPU mode — the model runs directly on the VM. You can also add an API provider to use additional models alongside the local one.');
+      await stepProvider();
     } else if (opt.id === 'cpu') {
-      await botMsg('Serverless CPU — which API provider should route inference?');
+      await botMsg('CPU serverless mode — the agent calls an external inference API for the model.\n\nWhich provider holds your API key?');
       await stepProvider();
     } else {
       await botMsg('Let me fetch the available compute configurations for that region…');
@@ -314,10 +315,10 @@ async function stepPlatformCustom() {
       cs.platformPreset = opt.id;
       cs.platformPresetLabel = opt.label;
       if (opt.isGpu) {
-        await botMsg('GPU configuration selected — no API key required. What should I name this endpoint?');
-        await stepName();
+        await botMsg('GPU config set — the model runs locally. You can also add an API provider to use additional models alongside the local one.');
+        await stepProvider();
       } else {
-        await botMsg('Which API provider should route inference?');
+        await botMsg('CPU config set — the agent will call an external inference API.\n\nWhich provider holds your API key?');
         await stepProvider();
       }
     });
@@ -339,7 +340,7 @@ async function stepProvider() {
     cs.provider = opt.id;
     cs.providerName = opt.name;
     cs.providerHint = opt.hint;
-    await botMsg(`${opt.name} — enter your API key below, or tap a saved key from MysteryBox:`);
+    await botMsg(`Using ${opt.name}.\n\nPaste your API key below, or pick a saved one from MysteryBox:`);
     await stepApiKey();
   });
 }
@@ -350,9 +351,27 @@ async function stepApiKey() {
   setInputMode(true, cs.providerHint || 'Paste API key…');
 }
 
+async function stepNetwork() {
+  cs.step = 'network';
+  await botMsg('Should the endpoint get a public or private IP?\n\nPrivate is recommended — it\'s more secure and doesn\'t use your limited public IP quota. You can still access it from the dashboard.');
+  showOptions([
+    { num: 1, id: 'private', label: '🔒 Private IP', desc: 'Internal network only (recommended)' },
+    { num: 2, id: 'public',  label: '🌐 Public IP',  desc: 'Accessible from the internet' },
+  ], async (opt) => {
+    userMsg(`${opt.num} — ${opt.label.replace(/^\S+\s/, '')}`);
+    cs.network = opt.id;
+    cs.networkName = opt.id === 'public' ? 'Public IP' : 'Private IP';
+    const netExplain = opt.id === 'private'
+      ? 'Private IP — only reachable from within the Nebius network. More secure, and doesn\'t count against your public IP quota.'
+      : 'Public IP — accessible from anywhere on the internet. Uses one of your public IPv4 addresses.';
+    await botMsg(`${netExplain}\n\nLast step — give the endpoint a name, or press Enter to auto-generate one.`);
+    await stepName();
+  });
+}
+
 async function stepName() {
   cs.step = 'name';
-  await botMsg('What should I name this endpoint? Press Enter to auto-generate.');
+  await botMsg('Enter a name for the endpoint, or press Enter to auto-generate one.');
   setInputMode(true, 'my-agent  (leave blank to auto-generate)');
 }
 
@@ -368,7 +387,8 @@ async function stepConfirm() {
     `• Model: ${cs.modelName}`,
     `• Region: ${cs.regionName}`,
     `• Platform: ${cs.platformName}${cs.platformPresetLabel ? ` (${cs.platformPresetLabel})` : ''}`,
-    !isGpu ? `• Provider: ${cs.providerName}` : null,
+    `• Network: ${cs.networkName}`,
+    `• Provider: ${cs.providerName}`,
     `\nReady to deploy?`,
   ].filter(Boolean);
 
@@ -400,7 +420,8 @@ async function stepDeploy() {
     provider:      cs.provider,
     customImage:   cs.customImage || '',
     endpointName:  cs.endpointName || '',
-    apiKey:        isGpu ? '' : (cs.apiKey || ''),
+    apiKey:        cs.apiKey || '',
+    usePublicIp:   cs.network === 'public',
   };
 
   try {
@@ -465,7 +486,7 @@ function chatSend() {
       cs.customImage = text;
       cs.imageName   = 'Custom (' + text.split('/').pop() + ')';
       (async () => {
-        await botMsg('What model should power your agent?');
+        await botMsg('Custom image set.\n\nNow pick a language model — this is the LLM the agent will use for reasoning and tool calls.');
         await stepModel();
       })();
       break;
@@ -477,8 +498,8 @@ function chatSend() {
       clearMbRow();
       cs.apiKey = text;
       (async () => {
-        await botMsg('API key saved! What should I name this endpoint?');
-        await stepName();
+        await botMsg('API key saved.');
+        await stepNetwork();
       })();
       break;
 
@@ -537,8 +558,8 @@ async function loadAndShowMbSecrets() {
         clearMbRow();
         setInputMode(false);
         userMsg(`🔐 ${s.name || s.id} (from MysteryBox)`);
-        await botMsg('API key loaded! What should I name this endpoint?');
-        await stepName();
+        await botMsg('API key loaded from MysteryBox.');
+        await stepNetwork();
       } catch (_) {
         btn.textContent = 'error';
       }

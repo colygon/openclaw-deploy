@@ -3,7 +3,7 @@
   "configurations": [
     {
       "name": "NemoClaw Deploy UI",
-      "runtimeExecutable": "node",
+      "runtimeExecutable": "/opt/homebrew/Cellar/node/24.2.0/bin/node",
       "runtimeArgs": ["web/server.js"],
       "port": 3000,
       "autoPort": false

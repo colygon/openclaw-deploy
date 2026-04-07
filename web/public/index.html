@@ -11,11 +11,15 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
+  <script>(function(){var t=localStorage.getItem('theme');if(t==='dark'||(!t&&matchMedia('(prefers-color-scheme:dark)').matches))document.documentElement.setAttribute('data-theme','dark')})()</script>
 </head>
 <body>
   <div id="app">
     <!-- Login Screen -->
     <div id="login-screen" class="screen">
+      <button class="theme-toggle login-theme-toggle" onclick="toggleTheme()" title="Toggle dark mode">
+        <span class="theme-icon">🌙</span>
+      </button>
       <div class="login-card">
         <div class="logo">🦞</div>
         <h1>Claw.Moi</h1>
@@ -26,22 +30,34 @@
         </button>
 
         <div id="token-form" style="display:none">
-          <p class="token-instructions">Run in your terminal:</p>
+          <p class="token-instructions">Install the Nebius CLI and get your token for access.</p>
+          <div class="token-cmd-wrap">
+            <code class="token-cmd" style="font-size:0.75rem">curl -sSL https://storage.eu-north1.nebius.cloud/cli/install.sh | bash</code>
+            <button class="token-copy-btn" onclick="navigator.clipboard.writeText('curl -sSL https://storage.eu-north1.nebius.cloud/cli/install.sh | bash')" title="Copy command">📋</button>
+          </div>
           <div class="token-cmd-wrap">
             <code class="token-cmd">nebius iam get-access-token</code>
             <button class="token-copy-btn" onclick="navigator.clipboard.writeText('nebius iam get-access-token')" title="Copy command">📋</button>
           </div>
-          <p class="token-instructions dim">Then paste the token below</p>
+          <p class="token-instructions dim">Paste the token below</p>
           <input type="password" id="token-input" class="token-input" placeholder="Paste access token here" onkeydown="if(event.key==='Enter')submitToken()" autocomplete="off">
           <div class="token-actions">
             <button id="token-submit-btn" class="btn btn-primary" onclick="submitToken()">Verify & Login</button>
             <button class="btn btn-ghost" onclick="cancelLogin()">Cancel</button>
           </div>
-          <p class="token-hint">Don't have the CLI? Run <code>curl -sSL https://storage.ai.nebius.cloud/nebius/install.sh | bash</code> first, then <code>nebius iam login</code></p>
         </div>
 
         <p class="hint" id="login-hint"></p>
         <a href="/demo" class="demo-link">or try the demo →</a>
+
+        <div class="prototype-notice">
+          <p>This is a <strong>prototype / demo</strong> — not an official Nebius service.</p>
+          <p>For full functionality, clone the repo and run locally:</p>
+          <div class="token-cmd-wrap">
+            <code class="token-cmd" style="font-size:0.75rem">git clone https://github.com/colygon/openclaw-deploy && cd openclaw-deploy/web && npm install && npm start</code>
+            <button class="token-copy-btn" onclick="navigator.clipboard.writeText('git clone https://github.com/colygon/openclaw-deploy && cd openclaw-deploy/web && npm install && npm start')" title="Copy command">📋</button>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -52,6 +68,12 @@
         <div class="sidebar-brand">
           <span class="logo-sm">🦞</span>
           <span class="sidebar-title">Claw.Moi</span>
+          <a href="https://github.com/colygon/openclaw-deploy" target="_blank" class="sidebar-github" title="GitHub">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+          </a>
+          <button class="theme-toggle" onclick="toggleTheme()" title="Toggle dark mode">
+            <span class="theme-icon">🌙</span>
+          </button>
         </div>
 
         <div class="sidebar-nav">
@@ -65,7 +87,7 @@
           </button>
           <button class="nav-item" data-page="deploy" onclick="switchPage('deploy')">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-            Create
+            Quick Start
           </button>
           <button class="nav-item active" data-page="endpoints" onclick="switchPage('endpoints')">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
@@ -141,7 +163,7 @@
               <div class="gs-step-num">2</div>
               <div class="gs-step-body">
                 <h3>Deploy an endpoint</h3>
-                <p>Go to <strong>Create</strong> and work through the steps: pick your agent image, choose a model, select a region, and choose a platform. For GPU workloads no API key is required. Hit <strong>Deploy</strong> — the endpoint spins up in about a minute.</p>
+                <p>Go to <strong>Quick Start</strong> and work through the steps: pick your agent image, choose a model, select a region, and choose a platform. For GPU workloads no API key is required. Hit <strong>Deploy</strong> — the endpoint spins up in about a minute.</p>
                 <ul class="gs-bullets">
                   <li>GPU — dedicated H200 VM, model runs locally, no API key needed</li>
                   <li>CPU Only — serverless, fastest cold start, uses Token Factory</li>
@@ -149,7 +171,7 @@
                 </ul>
                 <button class="btn btn-primary btn-sm gs-action" onclick="switchPage('deploy')">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-                  Go to Create
+                  Go to Quick Start
                 </button>
               </div>
             </div>
@@ -179,7 +201,7 @@
         <!-- Deploy Page -->
         <div id="page-deploy" class="page hidden">
           <div class="page-header">
-            <h2>Create Agent</h2>
+            <h2>Quick Start</h2>
             <p class="page-desc">Choose an agent, region, and deploy to Nebius Cloud</p>
           </div>
 
@@ -187,7 +209,7 @@
             <!-- Summary Mode (default) -->
             <div id="deploy-summary">
               <div id="summary-grid" class="summary-grid"></div>
-              <button class="btn btn-ghost btn-sm" id="customize-btn" onclick="toggleCustomize()">
+              <button class="btn btn-customize btn-sm" id="customize-btn" onclick="toggleCustomize()">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
                 Customize
               </button>
@@ -256,10 +278,30 @@
               </div>
             </section>
 
-            <!-- Step 5: Choose Provider (hidden for GPU platforms) -->
-            <section class="step" id="provider-step">
+            <!-- Step 5: Network -->
+            <section class="step">
               <div class="step-header">
                 <span class="step-num">5</span>
+                <h3>Network</h3>
+              </div>
+              <div class="card-grid" id="network-cards">
+                <div class="select-card" data-network="public" onclick="selectNetwork('public')">
+                  <div class="card-icon">🌐</div>
+                  <div class="card-title">Public IP</div>
+                  <div class="card-desc">Accessible from the internet</div>
+                </div>
+                <div class="select-card selected" data-network="private" onclick="selectNetwork('private')">
+                  <div class="card-icon">🔒</div>
+                  <div class="card-title">Private IP</div>
+                  <div class="card-desc">Internal network only</div>
+                </div>
+              </div>
+            </section>
+
+            <!-- Step 6: Choose Provider (hidden for GPU platforms) -->
+            <section class="step" id="provider-step">
+              <div class="step-header">
+                <span class="step-num">6</span>
                 <h3>Choose API Provider</h3>
               </div>
               <div class="card-grid" id="provider-cards"></div>
@@ -469,7 +511,7 @@
       </button>
       <button class="dock-item" data-page="deploy" onclick="switchPage('deploy')">
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-        <span>Create</span>
+        <span>Quick Start</span>
       </button>
       <button class="dock-item active" data-page="endpoints" onclick="switchPage('endpoints')">
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>

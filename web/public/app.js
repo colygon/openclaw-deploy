@@ -6,6 +6,7 @@ let state = {
   selectedPlatform: 'cpu',      // 'gpu' | 'cpu' | 'custom'
   customPlatformValue: null,    // 'platform:preset' e.g. 'gpu-h100-sxm:1gpu-16vcpu-200gb'
   selectedProvider: 'token-factory',
+  selectedNetwork: 'private',    // 'public' | 'private'
   authenticated: false
 };
 
@@ -75,8 +76,24 @@ document.addEventListener('click', (e) => {
   }
 });
 
+// ── Theme Toggle ────────────────────────────────────────────────────────────
+function toggleTheme() {
+  const html = document.documentElement;
+  const next = html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+  html.setAttribute('data-theme', next);
+  localStorage.setItem('theme', next);
+  updateThemeIcons(next);
+}
+
+function updateThemeIcons(theme) {
+  document.querySelectorAll('.theme-icon').forEach(el => {
+    el.textContent = theme === 'dark' ? '☀️' : '🌙';
+  });
+}
+
 // ── Init ─────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
+  updateThemeIcons(document.documentElement.getAttribute('data-theme') || 'light');
   checkAuth();
   setupDelegatedListeners();
 });
@@ -155,6 +172,7 @@ function setupDelegatedListeners() {
       copyToClipboard(copyBtn.dataset.copy);
     }
   });
+
 }
 
 // ── Auth-aware fetch (auto re-authenticates on 401) ─────────────────────────
@@ -324,6 +342,7 @@ function switchPage(page) {
   if (page === 'endpoints') loadEndpoints();
   if (page === 'registry') loadRegistries();
   if (page === 'chat') initChat();
+
 }
 
 // ── Load Images ──────────────────────────────────────────────────────────────
@@ -533,7 +552,7 @@ async function loadTokenFactoryModels() {
     const res = await authFetch('/api/models', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ apiKey })
+      body: JSON.stringify({ apiKey, region: state.selectedRegion || '' })
     });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
@@ -612,6 +631,7 @@ async function loadRegions() {
     if (keys.length > 0 && !state.selectedRegion) {
       selectRegion(keys[0]);
     }
+
   } catch (err) {
     console.error('Failed to load regions:', err);
   }
@@ -675,11 +695,7 @@ function isGpuSelected() {
 function updateProviderStepVisibility() {
   const providerStep = document.getElementById('provider-step');
   if (!providerStep) return;
-  if (isGpuSelected()) {
-    providerStep.classList.add('hidden');
-  } else {
-    providerStep.classList.remove('hidden');
-  }
+  providerStep.classList.remove('hidden');
 }
 
 async function selectPlatform(key) {
@@ -813,6 +829,15 @@ function selectProvider(provider) {
   updateDeployButton();
 }
 
+// ── Network (Public / Private IP) ────────────────────────────────────────────
+function selectNetwork(network) {
+  state.selectedNetwork = network;
+  document.querySelectorAll('#network-cards .select-card').forEach(c => {
+    c.classList.toggle('selected', c.dataset.network === network);
+  });
+  updateDeployButton();
+}
+
 function getActiveApiKey() {
   switch (state.selectedProvider) {
     case 'token-factory':
@@ -865,8 +890,16 @@ function buildSummaryGrid() {
     cards.push({ label: 'Platform', icon: p?.icon || '⚡', value: p?.name || state.selectedPlatform, step: 'platform' });
   }
 
-  // Provider (only for CPU)
-  if (state.selectedProvider && !isGpuSelected()) {
+  // Network
+  cards.push({
+    label: 'Network',
+    icon: state.selectedNetwork === 'public' ? '🌐' : '🔒',
+    value: state.selectedNetwork === 'public' ? 'Public IP' : 'Private IP',
+    step: 'network'
+  });
+
+  // Provider
+  if (state.selectedProvider) {
     const pr = PROVIDERS[state.selectedProvider];
     cards.push({ label: 'Provider', icon: pr?.icon || '🏭', value: pr?.name || state.selectedProvider, step: 'provider' });
   }
@@ -994,6 +1027,9 @@ async function selectMysteryBoxSecret(secretId, el) {
 
       if (value) {
         apiKeyField.value = value;
+        // Also fill Quick Start API key field
+        const qsField = document.getElementById('qs-api-key');
+        if (qsField) { qsField.value = value; updateQsDeployButton(); }
         updateDeployButton();
 
         if (badge) {
@@ -1083,14 +1119,7 @@ async function deploy() {
   const statusEl = document.getElementById('deploy-status');
 
   const gpu = isGpuSelected();
-  const apiKey = gpu ? '' : getActiveApiKey();
-  if (!gpu && !apiKey) {
-    const providerLabels = { 'token-factory': 'Token Factory', 'openrouter': 'OpenRouter', 'huggingface': 'HuggingFace' };
-    statusEl.className = 'deploy-status error';
-    statusEl.textContent = `${providerLabels[state.selectedProvider]} API key is required`;
-    statusEl.classList.remove('hidden');
-    return;
-  }
+  const apiKey = getActiveApiKey();
 
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span> Deploying...';
@@ -1108,7 +1137,8 @@ async function deploy() {
       provider: state.selectedProvider,
       customImage: document.getElementById('custom-image-url')?.value || '',
       endpointName: document.getElementById('endpoint-name').value || '',
-      apiKey: apiKey
+      apiKey: apiKey,
+      usePublicIp: state.selectedNetwork === 'public'
     };
 
     const res = await authFetch('/api/deploy', {
@@ -1134,7 +1164,15 @@ async function deploy() {
       setTimeout(loadEndpoints, 90000);
     } else {
       statusEl.className = 'deploy-status error';
-      statusEl.textContent = data.error || 'Deployment failed';
+      if (data.quotaExhausted) {
+        statusEl.innerHTML = `
+          <strong>No public IPs available</strong><br>
+          Using <strong>${data.usage}/${data.limit}</strong> public IPv4 addresses in this region.<br>
+          Delete or stop an existing endpoint to free up an IP, or request a quota increase from Nebius.
+        `;
+      } else {
+        statusEl.textContent = data.error || 'Deployment failed';
+      }
     }
   } catch (err) {
     statusEl.className = 'deploy-status error';
@@ -1210,13 +1248,14 @@ function renderEndpoints() {
     const model = h?.model ? (h.model.split('/').pop()) : (ep.model ? ep.model.split('/').pop() : '');
 
     const startStopBtn = (ep.state === 'RUNNING' || ep.state === 'STARTING')
-      ? `<button class="btn-action-icon btn-stop" data-action="stop" data-id="${esc(ep.id)}" data-name="${esc(ep.name)}" title="Stop"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg></button>`
-      : `<button class="btn-action-icon btn-start" data-action="start" data-id="${esc(ep.id)}" data-name="${esc(ep.name)}" title="Start"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="8,5 20,12 8,19"/></svg></button>`;
+      ? `<button class="btn-action-pill btn-stop" data-action="stop" data-id="${esc(ep.id)}" data-name="${esc(ep.name)}" title="Stop"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg> Stop</button>`
+      : `<button class="btn-action-pill btn-start" data-action="start" data-id="${esc(ep.id)}" data-name="${esc(ep.name)}" title="Start"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="8,5 20,12 8,19"/></svg> Start</button>`;
 
     const actions = [];
-    if (ep.publicIp && ep.state === 'RUNNING') {
-      actions.push(`<button class="btn-action-pill btn-terminal" data-action="terminal" data-ip="${esc(ep.publicIp)}" data-name="${esc(ep.name)}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg> Terminal</button>`);
-      actions.push(`<button class="btn-action-pill btn-dashboard" data-action="dashboard" data-ip="${esc(ep.publicIp)}" data-name="${esc(ep.name)}" ${ep.dashboardToken ? `data-token="${esc(ep.dashboardToken)}"` : ''}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg> Dashboard</button>`);
+    const connectIp = ep.publicIp || ep.privateIp;
+    if (connectIp && ep.state === 'RUNNING') {
+      actions.push(`<button class="btn-action-pill btn-terminal" data-action="terminal" data-ip="${esc(connectIp)}" data-name="${esc(ep.name)}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg> Terminal</button>`);
+      actions.push(`<button class="btn-action-pill btn-dashboard" data-action="dashboard" data-ip="${esc(connectIp)}" data-name="${esc(ep.name)}" ${ep.dashboardToken ? `data-token="${esc(ep.dashboardToken)}"` : ''}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg> Dashboard</button>`);
     }
     const actionButtons = actions.join('');
 
@@ -1267,9 +1306,9 @@ function renderEndpoints() {
           <span class="endpoint-detail-label">Inference</span>
           <span class="endpoint-detail-value">${esc(h.inference)}</span>
         </div>` : ''}
-        ${ep.publicIp ? `<div class="endpoint-detail-item">
-          <span class="endpoint-detail-label">IP Address</span>
-          <span class="endpoint-detail-value">${esc(ep.publicIp)}</span>
+        ${connectIp ? `<div class="endpoint-detail-item">
+          <span class="endpoint-detail-label">${ep.publicIp ? 'Public IP' : 'Private IP'}</span>
+          <span class="endpoint-detail-value">${esc(connectIp)}</span>
         </div>` : ''}
         <div class="endpoint-detail-item">
           <span class="endpoint-detail-label">Proxy URL</span>
@@ -1831,9 +1870,10 @@ async function openDashboard(ip, name, token) {
     hashParams.set('token', token);
     hashParams.set('gatewayUrl', wsUrl);
     const dashUrl = `${proxyBase}/#${hashParams.toString()}`;
-    window.open(dashUrl, `dashboard-${name}`);
-    // Auto-approve device pairing in background
+    // Auto-approve device pairing, then redirect via loading page
     autoPairApprove(ip, token);
+    const loadingUrl = `/dashboard-loading.html?target=${encodeURIComponent(dashUrl)}&delay=6000`;
+    window.open(loadingUrl, `dashboard-${name}`);
     return;
   }
 
@@ -1857,9 +1897,10 @@ async function openDashboard(ip, name, token) {
       hashParams.set('gatewayUrl', wsUrl);
       const hash = hashParams.toString();
       if (hash) dashUrl += '#' + hash;
-      window.open(dashUrl, `dashboard-${ip}`);
-      // Auto-approve device pairing in background
+      // Auto-approve, then redirect via loading page
       autoPairApprove(ip, data.token);
+      const loadingUrl = `/dashboard-loading.html?target=${encodeURIComponent(dashUrl)}&delay=6000`;
+      window.open(loadingUrl, `dashboard-${ip}`);
     } else {
       throw new Error(data.error || 'Failed to create tunnel');
     }
@@ -1882,11 +1923,19 @@ function autoPairApprove(ip, token) {
 function showDemoBanner() {
   const banner = document.createElement('div');
   banner.className = 'demo-banner';
-  banner.innerHTML = `
-    <span>🦞 <strong>Demo Mode</strong> — This is a live preview. To deploy real endpoints, run locally:</span>
-    <code>git clone https://github.com/colygon/openclaw-deploy && cd nemoclaw/web && npm install && npm start</code>
-    <button onclick="this.parentElement.remove()" class="demo-close">&times;</button>
-  `;
+  const bannerText = document.createElement('span');
+  bannerText.textContent = 'Demo Mode — This is a prototype, not an official Nebius service. To deploy real endpoints, run locally:';
+  const lobster = document.createElement('strong');
+  lobster.textContent = 'Demo Mode';
+  bannerText.textContent = '';
+  bannerText.append('🦞 ', lobster, ' — This is a prototype, not an official Nebius service. To deploy real endpoints, run locally:');
+  const cmd = document.createElement('code');
+  cmd.textContent = 'git clone https://github.com/colygon/openclaw-deploy && cd openclaw-deploy/web && npm i && npm start';
+  const closeBtn = document.createElement('button');
+  closeBtn.className = 'demo-close';
+  closeBtn.textContent = '\u00d7';
+  closeBtn.addEventListener('click', () => banner.remove());
+  banner.append(bannerText, cmd, closeBtn);
   document.body.prepend(banner);
 }
 
