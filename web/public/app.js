@@ -655,12 +655,12 @@ const PLATFORMS = {
   'cpu': {
     icon: '⚡',
     name: 'CPU Only',
-    desc: 'from $0.05/hr · Best for API models'
+    desc: 'from ~$36/mo · Best for API models'
   },
   'gpu': {
     icon: '🚀',
     name: 'GPU',
-    desc: 'from $1.55/hr · H100 · L40S · H200'
+    desc: 'from $1.55/hr (L40S) · H100 · H200'
   },
   'custom': {
     icon: '⚙️',
