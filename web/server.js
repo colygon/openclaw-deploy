@@ -1504,7 +1504,7 @@ app.post('/api/deploy', requireAuth, async (req, res) => {
       regionConfig.cpuPreset ? `--preset ${regionConfig.cpuPreset}` : '',
       '--container-port 8080',
       '--container-port 18789',
-      '--disk-size 250Gi',
+      '--disk-size 100Gi',
       ...envFlags,
       wantPublicIp ? '--public' : '',
       sshPubKey ? `--ssh-key "${sshPubKey}"` : ''

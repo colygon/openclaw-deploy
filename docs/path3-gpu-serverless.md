@@ -55,7 +55,7 @@ nebius ai endpoint create \
   --preset 1gpu-16vcpu-200gb \
   --container-port 8080 \
   --container-port 18789 \
-  --disk-size 250Gi \
+  --disk-size 100Gi \
   --env "OPENCLAW_WEB_PASSWORD={your-password}" \
   --env "INFERENCE_MODEL={your-model-id}" \
   --public \

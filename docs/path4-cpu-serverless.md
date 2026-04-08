@@ -64,7 +64,7 @@ nebius ai endpoint create \
   --preset 2vcpu-8gb \
   --container-port 8080 \
   --container-port 18789 \
-  --disk-size 250Gi \
+  --disk-size 100Gi \
   --env "TOKEN_FACTORY_API_KEY={your-token-factory-key}" \
   --env "TOKEN_FACTORY_URL=https://api.tokenfactory.nebius.com/v1" \
   --env "INFERENCE_MODEL=zai-org/GLM-5" \

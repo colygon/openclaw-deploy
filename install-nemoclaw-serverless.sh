@@ -398,7 +398,7 @@ ok "Using SSH key: $SSH_KEY_PATH"
 #   --platform   : CPU type (region-dependent, set above)
 #   --preset     : Resource allocation (vCPUs + RAM)
 #   --container-port : Ports to expose (8080 for health, 18789 for gateway)
-#   --disk-size  : Storage for the container (250Gi gives room for model caches)
+#   --disk-size  : Storage for the container (100Gi is sufficient for most workloads)
 #   --public     : Assign a public IP for direct access
 #   --ssh-key    : Authorize SSH key for Terminal access
 nebius ai endpoint create \
@@ -408,7 +408,7 @@ nebius ai endpoint create \
   --preset "$PRESET" \
   --container-port "$CONTAINER_PORT" \
   --container-port "$GATEWAY_PORT" \
-  --disk-size 250Gi \
+  --disk-size 100Gi \
   --env "TOKEN_FACTORY_API_KEY=${TOKEN_FACTORY_API_KEY}" \
   --env "TOKEN_FACTORY_URL=${TOKEN_FACTORY_URL}" \
   --env "INFERENCE_MODEL=${INFERENCE_MODEL}" \
