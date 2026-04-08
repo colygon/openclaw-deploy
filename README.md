@@ -62,6 +62,7 @@ docker pull ghcr.io/colygon/nemoclaw-serverless:latest   # ~1.1 GB
 
 ## Related
 
+- **[openclaw-nebius-plugin](https://github.com/colygon/openclaw-nebius-plugin)** — OpenClaw plugin for Nebius Cloud integration
 - **[nebius-skill](https://github.com/colygon/nebius-skill)** — Claude Code skill for managing Nebius infrastructure
 - **[OpenClaw](https://github.com/nichochar/openclaw)** — The open-source AI agent platform
 - **[Token Factory](https://tokenfactory.nebius.com)** — Nebius managed GPU inference API
