@@ -342,6 +342,15 @@ const REGION_PROFILES = nebiusConfig.profiles;
 const TENANT_ID = nebiusConfig.tenantId;
 
 // ── Demo mode (Vercel) ──────────────────────────────────────────────────
+// Regions with their own Token Factory endpoint; all others use the global URL
+const TF_REGIONAL_ENDPOINTS = new Set(['us-central1']);
+function tokenFactoryUrl(region) {
+  if (region && TF_REGIONAL_ENDPOINTS.has(region)) {
+    return `https://api.tokenfactory.${region}.nebius.com/v1`;
+  }
+  return 'https://api.tokenfactory.nebius.com/v1';
+}
+
 const DEMO_REGIONS = {
   'eu-north1':   { name: 'EU North (Finland)', flag: '🇫🇮', registry: 'cr.eu-north1.nebius.cloud',   cpuPlatform: 'cpu-e2' },
   'eu-west1':    { name: 'EU West (Paris)',     flag: '🇫🇷', registry: 'cr.eu-west1.nebius.cloud',    cpuPlatform: 'cpu-d3' },
@@ -1067,9 +1076,7 @@ app.post('/api/models', requireAuth, async (req, res) => {
 
   try {
     const tfRegion = req.body.region || '';
-    const tfBase = tfRegion
-      ? `https://api.tokenfactory.${tfRegion}.nebius.com/v1`
-      : 'https://api.tokenfactory.nebius.com/v1';
+    const tfBase = tokenFactoryUrl(tfRegion);
     const tfUrl = `${tfBase}/models`;
 
     // Try user-provided API key first, then env var, then MysteryBox
@@ -1467,7 +1474,7 @@ app.post('/api/deploy', requireAuth, async (req, res) => {
         case 'token-factory':
         default:
           envFlags.push(`--env "TOKEN_FACTORY_API_KEY=${apiKey}"`);
-          envFlags.push(`--env "TOKEN_FACTORY_URL=https://api.tokenfactory.${region}.nebius.com/v1"`);
+          envFlags.push(`--env "TOKEN_FACTORY_URL=${tokenFactoryUrl(region)}"`);
           break;
       }
     }
