@@ -2217,6 +2217,10 @@ input::placeholder { color: var(--deep-navy); opacity: 0.35; }
   border-top: 2px solid rgba(255, 255, 255, 0.15);
 }
 
+.terminal-panel.fullscreen {
+  top: 0;
+}
+
 .terminal-panel.hidden {
   display: flex !important;
   transform: translateY(100%);
@@ -2490,6 +2494,9 @@ body.terminal-open {
 
 .demo-banner ~ #app .main-app { padding-top: 72px; }
 .demo-banner ~ #app .sidebar { top: 72px; height: calc(100vh - 72px); }
+.demo-banner ~ #app .page-header,
+.demo-banner ~ #app .page-header-top,
+.demo-banner ~ #app .page-header-toolbar { top: 72px; }
 
 /* ── Transitions ─────────────────────────────────────────────────── */
 a {

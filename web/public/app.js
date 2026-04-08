@@ -655,18 +655,28 @@ const PLATFORMS = {
   'cpu': {
     icon: '⚡',
     name: 'CPU Only',
-    desc: 'Lowest cost · Best for API models'
+    desc: 'from $0.05/hr · Best for API models'
   },
   'gpu': {
     icon: '🚀',
     name: 'GPU',
-    desc: 'H100 · L40S · H200 available'
+    desc: 'from $1.55/hr · H100 · L40S · H200'
   },
   'custom': {
     icon: '⚙️',
     name: 'Custom',
     desc: 'Choose vCPUs, RAM, GPU model'
   }
+};
+
+const PLATFORM_PRICES = {
+  'gpu-l40s':     { perGpu: 1.55, label: 'L40S' },
+  'gpu-l40s-a':   { perGpu: 1.82, label: 'L40S' },
+  'gpu-h100-sxm': { perGpu: 2.95, label: 'H100' },
+  'gpu-h100-b':   { perGpu: 2.95, label: 'H100' },
+  'gpu-h200-sxm': { perGpu: 3.50, label: 'H200' },
+  'cpu-e2':       { perVcpu: 0.025, label: 'Intel Ice Lake' },
+  'cpu-d3':       { perVcpu: 0.025, label: 'AMD EPYC' }
 };
 
 function loadPlatformCards() {
@@ -750,10 +760,15 @@ async function loadCustomPlatformOptions() {
         const mem = pr.memory_gib;
         const gpu = pr.gpu_count;
         let label;
+        const pricing = PLATFORM_PRICES[p.id];
         if (isGpu) {
-          label = `${gpuModel} — ${gpu}× GPU, ${vcpu} vCPUs, ${mem} GiB`;
+          label = `${gpuModel} — ${gpu}× GPU, ${vcpu} vCPUs`;
+          if (mem) label += `, ${mem} GiB`;
+          if (pricing) label += ` — $${(pricing.perGpu * gpu).toFixed(2)}/hr`;
         } else {
-          label = `${p.id.replace('cpu-', 'CPU ').toUpperCase()} — ${vcpu} vCPUs, ${mem} GiB`;
+          label = `${p.id.replace('cpu-', 'CPU ').toUpperCase()} — ${vcpu} vCPUs`;
+          if (mem) label += `, ${mem} GiB`;
+          if (pricing) label += ` — ~$${(pricing.perVcpu * vcpu).toFixed(2)}/hr`;
         }
         const value = `${p.id}:${pr.name}`;
         const opt = `<option value="${esc(value)}">${esc(label)}</option>`;
@@ -1769,8 +1784,12 @@ function closeTerminal() {
     window.removeEventListener('resize', window._terminalResizeHandler);
   }
 
-  // Hide panel
-  document.getElementById('terminal-panel').classList.add('hidden');
+  // Hide panel and reset fullscreen
+  const panel = document.getElementById('terminal-panel');
+  panel.classList.add('hidden');
+  panel.classList.remove('fullscreen');
+  document.getElementById('term-fullscreen-btn').classList.remove('hidden');
+  document.getElementById('term-exit-fs-btn').classList.add('hidden');
   document.body.classList.remove('terminal-open');
   currentTerminalIp = null;
   currentTerminalName = null;
@@ -1784,6 +1803,21 @@ function reconnectTerminal() {
     }
     connectTerminalWs(currentTerminalIp);
   }
+}
+
+function toggleTerminalFullscreen() {
+  const panel = document.getElementById('terminal-panel');
+  const isFs = panel.classList.toggle('fullscreen');
+  document.getElementById('term-fullscreen-btn').classList.toggle('hidden', isFs);
+  document.getElementById('term-exit-fs-btn').classList.toggle('hidden', !isFs);
+  if (fitAddon) setTimeout(() => fitAddon.fit(), 50);
+}
+
+function openTerminalNewWindow() {
+  if (!currentTerminalIp) return;
+  const params = new URLSearchParams({ ip: currentTerminalIp, name: currentTerminalName || '' });
+  window.open('/terminal-window.html?' + params.toString(), 'terminal-' + currentTerminalIp);
+  closeTerminal();
 }
 
 // ── Logs Viewer ──────────────────────────────────────────────────────────────
